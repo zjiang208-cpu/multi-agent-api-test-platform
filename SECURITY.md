@@ -1,26 +1,18 @@
-# Security Baseline
+# 安全基线
 
-Phase 1 applies these rules:
+当前版本遵循以下规则：
 
-- Secrets are represented by references such as `api_key_ref`, `dsn_ref`, or
-  `auth_ref`, not secret values. The LLM uses only the original
-  `DEEPSEEK_API_KEY` process environment variable.
-- Configuration/status endpoints return whether an optional capability is
-  configured, never its credential or raw environment value.
-- Project payloads reject unknown fields so callers cannot silently persist raw
-  password/token fields.
-- Remote target execution is disabled by default.
-- Project metadata is stored beneath the configured data directory.
-- The platform does not import or execute target-project code.
-- Automatic SMS login, when enabled by a configured phone reference, code
-  endpoint, and Redis or JSON code source, only uses the declared target
-  endpoints and configured code store. The resulting token is held in process
-  memory and is never persisted, displayed, or sent to the LLM.
-- Configured HTTP Auth Providers persist only request templates and environment
-  variable references. Resolved login credentials are substituted in memory,
-  extracted credentials are held only for the execution process, and injected
-  request headers/cookies remain redacted in reports.
+- 凭证只保存为 `api_key_ref`、`dsn_ref` 或 `auth_ref` 等引用，不保存密钥值。
+  LLM 只使用进程环境变量中的 `DEEPSEEK_API_KEY`。
+- 配置和状态接口只返回可选能力是否已配置，不返回凭证或原始环境变量值。
+- 项目数据会拒绝未声明字段，调用方不能通过未知字段悄悄保存密码或令牌。
+- 默认禁止远程目标执行。
+- 项目元数据保存在配置的数据目录下。
+- 平台不会导入或执行被测项目代码。
+- 启用自动短信登录时，Provider 只使用已声明的目标接口和配置的 Redis 或 JSON
+  验证码来源。获取到的令牌只保存在进程内存中，不会持久化、展示或发送给 LLM。
+- HTTP Auth Provider 只持久化请求模板和环境变量引用。登录凭证仅在内存中替换，
+  提取出的凭证只在执行期间保留，注入的请求头和 Cookie 在报告中会脱敏。
 
-Source-root containment, sensitive-file rejection, read-only DB profiles,
-request/response limits, and bounded/masked LLM prompts are implemented in the
-current workflow. Real credentials remain outside the repository.
+当前工作流已实现源码目录约束、敏感文件拒绝、只读数据库配置、请求/响应大小限制，
+以及有边界并经过脱敏的 LLM 提示词。真实凭证始终保存在仓库之外。

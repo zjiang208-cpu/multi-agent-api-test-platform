@@ -2,14 +2,14 @@
 
 这是一个基于 Multi-Agent 的接口自动化测试平台，面向通用接口需求文档，
 通过多源证据完成接口识别、需求分析、测试点提取、用例设计、批量执行与报告生成。
-平台与具体业务系统解耦，支持 Markdown、OpenAPI、YAML 等需求与接口描述来源。
+平台与具体业务系统解耦，当前主流程使用 Markdown 格式的接口需求文档。
 
-The current implementation phase is recorded in:
+当前实现阶段记录在：
 
 - `CURRENT_ARCHITECTURE.md`
 - `MIGRATION_PLAN.md`
 
-## Quick start (`pytorch` environment)
+## 快速开始（`pytorch` 环境）
 
 ```powershell
 cd backend
@@ -17,11 +17,11 @@ conda run -n pytorch python -m pip install -e ".[dev]"
 conda run -n pytorch uvicorn app.main:app --reload --port 8000
 ```
 
-Health check: `http://127.0.0.1:8000/health`
+健康检查：`http://127.0.0.1:8000/health`
 
-API documentation: `http://127.0.0.1:8000/docs`
+接口文档：`http://127.0.0.1:8000/docs`
 
-Start the frontend in another terminal:
+在另一个终端启动前端：
 
 ```powershell
 cd frontend
@@ -29,56 +29,47 @@ npm install
 npm run dev
 ```
 
-The frontend defaults to `http://127.0.0.1:5173`. The backend defaults to
-`http://127.0.0.1:8000`, and the tested Java service defaults to
-`http://127.0.0.1:8081`. To use another frontend port, set
-`VITE_PORT` before running the development server.
+前端默认地址为 `http://127.0.0.1:5173`，后端默认地址为
+`http://127.0.0.1:8000`，被测服务默认地址为 `http://127.0.0.1:8081`。
+如需使用其他前端端口，请在启动开发服务器前设置 `VITE_PORT`。
 
 当前实现包含项目与设置管理、多源证据采集、需求文档解析、接口级顺序处理、
 测试点与测试用例设计、人工执行确认、确定性批量执行、断言评估和报告中心。
 NLU、Designer、Reviewer 三个智能角色负责需求理解、用例设计与语义检查，
 执行层使用确定性 HTTP、鉴权和断言逻辑，避免将执行结果交给模型猜测。
 
-Production prompts are versioned YAML files under `backend/config/prompts`:
-`nlu.v1.yaml`, `designer.v1.yaml`, and `reviewer.v1.yaml`. Each workflow snapshot
-records the independent prompt versions and SHA-256 hashes.
+生产环境提示词以版本化 YAML 文件保存在 `backend/config/prompts` 下：
+`nlu.v1.yaml`、`designer.v1.yaml` 和 `reviewer.v1.yaml`。每个工作流快照都会记录
+各提示词的独立版本和 SHA-256 哈希值。
 
-Operations can be discovered from OpenAPI or from the platform's
-one-operation-per-YAML contracts by placing the file paths in a project's
-`requirement_sources`. The YAML contract's preconditions, business rules,
-response scenarios, and unresolved questions become traceable operation
-metadata and evidence.
+当前主流程使用 Markdown 格式的接口需求文档。接口目录也可以通过项目的
+`requirement_sources` 导入 OpenAPI 文档或平台规定的“一文件一个接口” YAML
+契约；契约中的前置条件、业务规则、响应场景和待确认问题会保留为可追溯的接口
+元数据与证据。
 
-No target project, local machine path, credential, or API key is a platform
-default. Configure those values through private environment/project settings.
+平台不会预置目标项目、本机路径、凭证或 API 密钥。请通过私有环境变量和项目设置
+配置这些内容。
 
-LLM configuration follows the original platform's process environment
-contract: `DEEPSEEK_API_KEY` is the only credential variable, the provider is
-OpenAI-compatible DeepSeek, the model is `deepseek-v4-flash`, and the endpoint
-is `https://api.deepseek.com/v1`. Other vendor environment variables are not
-auto-detected. Only the `env:DEEPSEEK_API_KEY` reference is stored; the secret
-value is never persisted or returned by the API.
+LLM 配置遵循平台的进程环境变量约定：唯一的模型凭证变量是
+`DEEPSEEK_API_KEY`，服务商为兼容 OpenAI 接口的 DeepSeek，模型为
+`deepseek-v4-flash`，接口地址为 `https://api.deepseek.com/v1`。平台不会自动探测
+其他服务商的环境变量。系统只保存 `env:DEEPSEEK_API_KEY` 引用，不会持久化或通过
+接口返回密钥值。
 
-Database DSNs and target authentication follow the same pattern: configure the
-project with `dsn_ref=env:...` or `auth_ref=env:...`; the Python process resolves
-the value only at the moment it is needed.
+数据库 DSN 和被测服务鉴权采用相同模式：在项目中配置
+`dsn_ref=env:...` 或 `auth_ref=env:...`，由 Python 进程仅在需要时解析实际值。
 
-Targets use the portable `auth_provider` project setting. Configure
-`login` (method, path, request template, and `credential_refs`), `extract`
-(`json`, response `header`, or `cookie` plus a path/name), and `inject` (request
-header or cookie name and optional prefix). Login templates reference secrets
-with `{{name}}`; only the corresponding `env:NAME` references are persisted.
-The provider executes this deterministic sequence before the test batch. When
-`token_ttl_seconds` is set, the backend also refreshes the credential in the
-background from startup until shutdown, so the target may be implemented in
-Java, Python, Go, or have no source workspace at all.
+被测服务使用通用的 `auth_provider` 项目设置。请配置 `login`（方法、路径、请求
+模板和 `credential_refs`）、`extract`（`json`、响应 `header` 或 `cookie`，以及路径
+或名称）和 `inject`（请求头或 Cookie 名称及可选前缀）。登录模板使用 `{{name}}`
+引用密钥，系统只保存对应的 `env:NAME` 引用。执行批量测试前，Provider 会按此确定性
+顺序获取凭证；设置 `token_ttl_seconds` 后，后端会从启动到关闭期间在后台自动刷新凭证。
 
-`auth_provider.kind` supports both `http` and `sms`. The SMS adapter accepts a
-phone environment reference, a code-request template, a Redis or JSON code
-source, and a login template. Its Redis host, port, password reference, and key
-pattern are all configurable; no target-specific table or endpoint is assumed.
+`auth_provider.kind` 支持 `http` 和 `sms` 两种方式。短信适配器支持手机号环境变量
+引用、验证码请求模板、Redis 或 JSON 验证码来源以及登录模板；Redis 主机、端口、
+密码引用和键名模式均可配置，不假定任何业务专用表或接口。
 
-The portable shape is:
+通用 HTTP 鉴权配置示例：
 
 ```json
 {
