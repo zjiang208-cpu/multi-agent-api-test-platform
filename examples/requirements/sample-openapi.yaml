@@ -1,0 +1,55 @@
+openapi: 3.0.3
+info:
+  title: Sample Inventory API
+  version: 1.0.0
+paths:
+  /items/{item_id}:
+    get:
+      operationId: get-item
+      summary: Get one inventory item
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Item found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        '404':
+          description: Item not found
+  /items:
+    post:
+      operationId: create-item
+      summary: Create an inventory item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItemCreate'
+      responses:
+        '201':
+          description: Item created
+components:
+  schemas:
+    Item:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+    ItemCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+

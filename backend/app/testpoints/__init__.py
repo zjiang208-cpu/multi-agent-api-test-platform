@@ -1,0 +1,2 @@
+"""Deterministic test point generation."""
+

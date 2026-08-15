@@ -1,0 +1,2 @@
+"""Pydantic domain models."""
+

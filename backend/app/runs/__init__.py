@@ -1,0 +1,2 @@
+"""Durable run result storage."""
+

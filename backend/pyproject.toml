@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multi-agent-api-test-platform"
+version = "0.1.0"
+description = "Multi-Agent based API automation testing platform"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<1.0",
+    "httpx>=0.27,<1.0",
+    "python-multipart>=0.0.9,<1.0",
+    "pypdf>=5.0,<7.0",
+    "pydantic>=2.7,<3.0",
+    "pydantic-settings>=2.2,<3.0",
+    "PyYAML>=6.0,<7.0",
+    "SQLAlchemy>=2.0,<3.0",
+    "langchain>=0.3,<0.4",
+    "langgraph>=0.6,<0.7",
+    "uvicorn[standard]>=0.30,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9.0",
+    "pytest-asyncio>=0.23,<1.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools.data-files]
+"config/prompts" = [
+    "config/prompts/nlu.v1.yaml",
+    "config/prompts/designer.v1.yaml",
+    "config/prompts/reviewer.v1.yaml",
+]
+
+[tool.pytest.ini_options]
+pythonpath = [".", ".."]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_default_fixture_loop_scope = "function"
