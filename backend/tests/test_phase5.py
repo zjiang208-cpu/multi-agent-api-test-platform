@@ -44,6 +44,8 @@ def case_fixture(requirement_id: str, point_id: str, evidence_id: str, *, case_i
 def test_structured_parser_budget_and_designer_validation():
     parsed = StructuredOutputParser.parse("```json\n{\"value\": 3}\n```", JsonValue)
     assert parsed.value == 3
+    wrapped = StructuredOutputParser.parse("Here is the JSON:\n{\"value\": 4}\nDone.", JsonValue)
+    assert wrapped.value == 4
     budget = CallBudget(max_calls=1)
     budget.consume()
     with pytest.raises(ProviderError):

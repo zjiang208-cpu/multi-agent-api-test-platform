@@ -41,6 +41,7 @@ def execution_case(assertions):
 def test_json_path_and_assertions_cover_business_failure_and_expression():
     body = {"success": False, "errorMsg": "item not found", "data": {"items": [{"id": 7}]}}
     assert read_json_path(body, "$.data.items[0].id") == 7
+    assert read_json_path({"data": [1, 2, 3]}, "$.data.length") == 3
     with pytest.raises(AssertionEvaluationError, match="must start with"):
         read_json_path(body, "data.items[0].id")
     status = evaluate_assertion(
@@ -140,6 +141,66 @@ def test_json_type_and_response_schema_are_structural():
     )
     assert boolean_as_integer.passed is False
     assert schema.passed is True
+
+
+def test_json_exists_can_assert_a_required_field_is_absent():
+    assertion = CaseAssertion(
+        assertion_id="A-no-password",
+        type="json_exists",
+        path="$.password",
+        expected=False,
+    )
+
+    absent = evaluate_assertion(
+        assertion,
+        status_code=200,
+        headers={},
+        body={"id": 1},
+        duration_ms=1,
+    )
+    present = evaluate_assertion(
+        assertion,
+        status_code=200,
+        headers={},
+        body={"id": 1, "password": "masked"},
+        duration_ms=1,
+    )
+
+    assert absent.passed is True
+    assert absent.actual is False
+    assert present.passed is False
+    assert present.actual is True
+
+
+def test_json_array_sorted_checks_primary_and_tie_breaker_fields():
+    assertion = CaseAssertion(
+        assertion_id="A-sort",
+        type="json_array_sorted",
+        path="$.data",
+        expected={
+            "fields": [
+                {"path": "$.liked", "order": "desc"},
+                {"path": "$.id", "order": "desc"},
+            ]
+        },
+    )
+    accepted = evaluate_assertion(
+        assertion,
+        status_code=200,
+        headers={},
+        body={"data": [{"liked": True, "id": 9}, {"liked": True, "id": 7}, {"liked": False, "id": 8}]},
+        duration_ms=1,
+    )
+    rejected = evaluate_assertion(
+        assertion,
+        status_code=200,
+        headers={},
+        body={"data": [{"liked": True, "id": 7}, {"liked": True, "id": 9}]},
+        duration_ms=1,
+    )
+
+    assert accepted.passed is True
+    assert rejected.passed is False
 
 
 def test_response_schema_can_reject_undocumented_object_fields():

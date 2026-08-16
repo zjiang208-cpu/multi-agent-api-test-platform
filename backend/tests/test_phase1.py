@@ -55,6 +55,16 @@ def test_health_and_config_are_safe(tmp_path):
     assert "SECRET_REF" not in config.text
 
 
+def test_app_lifespan_starts_and_stops_background_services(tmp_path):
+    app = create_app(settings=AppSettings(data_dir=tmp_path))
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+        assert app.state.auth_provider._refresh_task is not None
+
+    assert app.state.auth_provider._refresh_task is None
+
+
 def test_project_crud_is_persistent_and_rejects_secret_fields(tmp_path):
     settings = AppSettings(data_dir=tmp_path)
     first_client = TestClient(create_app(settings=settings))

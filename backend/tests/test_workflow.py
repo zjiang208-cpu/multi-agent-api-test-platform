@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from app.evidence.providers.database import DatabaseFixtureResolver
+from app.models.auth import AuthProtocol
 from app.models.cases import Assertion, CaseSet, TestCase
 from app.models.contracts import OperationContract, SourceReference
 from app.models.evidence import EvidenceBundle, EvidenceFact
@@ -86,6 +87,290 @@ response: created item id only
     )
     assert "created item id only" in excerpt_without_source_range
     assert "item detail fields" not in excerpt_without_source_range
+
+
+def test_auth_context_keeps_document_level_protocol_without_neighboring_operation_rules():
+    document = """# API rules
+
+## 当前协议约定
+
+- Token 直接放入 authorization，不使用 Bearer 前缀。
+
+## 1. 查询当前用户
+
+GET /user/me
+响应字段：id、nickName、icon
+
+## 2. 查询商户
+
+GET /shop/{id}
+响应字段：name、address
+"""
+    operation = OperationContract(
+        operation_id="get-user-me",
+        method="GET",
+        path="/user/me",
+        source_document_id="doc-1",
+        source_refs=[
+            SourceReference(
+                source_document_id="doc-1",
+                start_line=9,
+                end_line=11,
+                reference="document:doc-1:lines:9-11",
+            )
+        ],
+        responses=[{"status_code": 200}],
+    )
+
+    excerpt = ApiTestWorkflow._operation_requirement_excerpt(operation, document)
+    context = ApiTestWorkflow._operation_auth_context(operation, document, excerpt)
+
+    assert "不使用 Bearer 前缀" in context
+    assert "id、nickName、icon" in context
+    assert "name、address" not in context
+
+
+def test_nlu_retains_expired_token_negative_and_marks_missing_fixture(tmp_path):
+    workflow, project_id, operation, _ = _build_workflow(tmp_path)
+    requirement = RequirementDocument(
+        requirement_id="REQ-GET-ITEM-001",
+        api=operation,
+        unresolved_questions=[],
+    )
+    points = TestPointCollection(
+        requirement_id=requirement.requirement_id,
+        requirement_version=1,
+        points=[
+            TestPoint(
+                point_id="TP-MISSING-AUTH",
+                requirement_id=requirement.requirement_id,
+                title="缺少 Authorization 返回 401",
+                category="negative",
+                action="不携带 Authorization 请求头。",
+                expected_result="返回 401。",
+            ),
+            TestPoint(
+                point_id="TP-EXPIRED-AUTH",
+                requirement_id=requirement.requirement_id,
+                title="过期 Token 返回 401",
+                category="negative",
+                action="使用过期 Token 请求接口。",
+                expected_result="返回 401。",
+            ),
+        ],
+    )
+
+    normalized_requirement, normalized_points = workflow._normalize_auth_protocol_output(
+        requirement,
+        points,
+        AuthProtocol(status="explicit", prefix=None),
+        EvidenceBundle(operation_id=operation.operation_id, facts=[]),
+    )
+
+    assert [point.point_id for point in normalized_points.points] == [
+        "TP-MISSING-AUTH",
+        "TP-EXPIRED-AUTH",
+    ]
+    assert any("过期 Token 负例" in item for item in normalized_requirement.unresolved_questions)
+
+
+def test_nlu_binds_available_nonexistent_auth_fixture(tmp_path):
+    workflow, project_id, operation, _ = _build_workflow(tmp_path)
+    requirement = RequirementDocument(
+        requirement_id="REQ-GET-ITEM-001",
+        api=operation,
+    )
+    points = TestPointCollection(
+        requirement_id=requirement.requirement_id,
+        requirement_version=1,
+        points=[
+            TestPoint(
+                point_id="TP-NONEXISTENT-AUTH",
+                requirement_id=requirement.requirement_id,
+                title="不存在 Token 返回 401",
+                category="negative",
+                action="使用不存在 Token 请求接口。",
+                expected_result="返回 401。",
+            )
+        ],
+    )
+    fixture = EvidenceFact(
+        evidence_id="E-AUTH-NONEXISTENT",
+        source_type="auth_fixture",
+        reference="auth-fixture:get-item:nonexistent-token",
+        fact="$AUTH_FIXTURE[nonexistent:token] is available.",
+        metadata={
+            "fixture_kind": "nonexistent",
+            "token_placeholder": "$AUTH_FIXTURE[nonexistent:token]",
+        },
+    )
+
+    normalized_requirement, normalized_points = workflow._normalize_auth_protocol_output(
+        requirement,
+        points,
+        AuthProtocol(status="explicit", prefix=None),
+        EvidenceBundle(operation_id=operation.operation_id, facts=[fixture]),
+    )
+
+    assert "$AUTH_FIXTURE[nonexistent:token]" in normalized_points.points[0].action
+    assert "E-AUTH-NONEXISTENT" in normalized_points.points[0].evidence_refs
+    assert any(ref.evidence_id == "E-AUTH-NONEXISTENT" for ref in normalized_requirement.evidence_refs)
+
+
+def test_nlu_merges_expired_and_nonexistent_auth_failures_with_same_401(tmp_path):
+    workflow, project_id, operation, _ = _build_workflow(tmp_path)
+    requirement = RequirementDocument(
+        requirement_id="REQ-GET-ITEM-001",
+        api=operation,
+    )
+    points = TestPointCollection(
+        requirement_id=requirement.requirement_id,
+        requirement_version=1,
+        points=[
+            TestPoint(
+                point_id="TP-EXPIRED-AUTH",
+                requirement_id=requirement.requirement_id,
+                title="过期 Token 返回 401",
+                category="negative",
+                action="使用过期 Token 请求接口。",
+                expected_result="返回 HTTP 401。",
+            ),
+            TestPoint(
+                point_id="TP-NONEXISTENT-AUTH",
+                requirement_id=requirement.requirement_id,
+                title="不存在 Token 返回 401",
+                category="negative",
+                action="使用不存在 Token 请求接口。",
+                expected_result="返回 HTTP 401。",
+            ),
+        ],
+    )
+    fixture = EvidenceFact(
+        evidence_id="E-AUTH-NONEXISTENT",
+        source_type="auth_fixture",
+        reference="auth-fixture:get-item:nonexistent-token",
+        fact="$AUTH_FIXTURE[nonexistent:token] is available.",
+        metadata={
+            "fixture_kind": "nonexistent",
+            "token_placeholder": "$AUTH_FIXTURE[nonexistent:token]",
+        },
+    )
+
+    normalized_requirement, normalized_points = workflow._normalize_auth_protocol_output(
+        requirement,
+        points,
+        AuthProtocol(status="explicit", prefix=None),
+        EvidenceBundle(operation_id=operation.operation_id, facts=[fixture]),
+    )
+
+    assert len(normalized_points.points) == 1
+    assert normalized_points.points[0].title == "过期/不存在 Token 返回 401"
+    assert "$AUTH_FIXTURE[nonexistent:token]" in normalized_points.points[0].action
+    assert not normalized_requirement.unresolved_questions
+
+
+def test_nlu_canonicalizes_single_nonexistent_auth_point_to_combined_semantics(tmp_path):
+    workflow, _, operation, _ = _build_workflow(tmp_path)
+    requirement = RequirementDocument(
+        requirement_id="REQ-GET-ITEM-001",
+        api=operation,
+        business_rules=["缺少、过期或不存在的 Token 返回 HTTP 401。"],
+        expected_behaviors=[
+            "携带不存在的 Token 返回 HTTP 401。",
+            "携带过期 Token 返回 HTTP 401。",
+        ],
+    )
+    points = TestPointCollection(
+        requirement_id=requirement.requirement_id,
+        requirement_version=1,
+        points=[
+            TestPoint(
+                point_id="TP-NONEXISTENT-AUTH",
+                requirement_id=requirement.requirement_id,
+                title="不存在 Token 返回 401",
+                category="negative",
+                action="使用不存在 Token 请求接口。",
+                expected_result="返回 HTTP 401。",
+            )
+        ],
+    )
+    fixture = EvidenceFact(
+        evidence_id="E-AUTH-NONEXISTENT",
+        source_type="auth_fixture",
+        reference="auth-fixture:get-item:nonexistent-token",
+        fact="Use $AUTH_FIXTURE[nonexistent:token].",
+        metadata={
+            "fixture_kind": "nonexistent",
+            "token_placeholder": "$AUTH_FIXTURE[nonexistent:token]",
+        },
+    )
+
+    normalized_requirement, normalized_points = workflow._normalize_auth_protocol_output(
+        requirement,
+        points,
+        AuthProtocol(status="explicit", prefix=None),
+        EvidenceBundle(operation_id=operation.operation_id, facts=[fixture]),
+    )
+
+    assert len(normalized_points.points) == 1
+    assert normalized_points.points[0].title == "过期/不存在 Token 返回 401"
+    assert normalized_requirement.expected_behaviors == [
+        "携带过期/不存在 Token 时返回 HTTP 401，通常无响应体。"
+    ]
+
+
+def test_designer_redacted_negative_auth_header_is_canonicalized_to_fixture():
+    fixture = EvidenceFact(
+        evidence_id="E-AUTH-NONEXISTENT",
+        source_type="auth_fixture",
+        reference="auth-fixture:get-item:nonexistent-token",
+        fact="$AUTH_FIXTURE[nonexistent:token] is available.",
+        metadata={
+            "fixture_kind": "nonexistent",
+            "token_placeholder": "$AUTH_FIXTURE[nonexistent:token]",
+        },
+    )
+    case = TestCase(
+        case_id="CASE-AUTH-NEGATIVE",
+        requirement_id="REQ-GET-ITEM-001",
+        test_point_ids=["TP-AUTH-NEGATIVE"],
+        title="invalid token returns 401",
+        category="negative",
+        steps=["send request"],
+        expected_behavior="HTTP 401",
+        request={
+            "method": "GET",
+            "path": "/items/{id}",
+            "path_params": {"id": 1},
+            "headers": {"Authorization": "<redacted>"},
+        },
+        assertions=[
+            {
+                "assertion_id": "ASSERT-401",
+                "type": "status_code",
+                "expected": 401,
+                "evidence_refs": ["E-REQ"],
+            }
+        ],
+        evidence_refs=["E-REQ"],
+    )
+    missing_header = case.model_copy(
+        update={
+            "case_id": "CASE-AUTH-MISSING",
+            "request": case.request.model_copy(update={"headers": {}}),
+        }
+    )
+    normalized = ApiTestWorkflow._canonicalize_redacted_auth_cases(
+        CaseSet(requirement_id="REQ-GET-ITEM-001", cases=[case, missing_header]),
+        {
+            "evidence": EvidenceBundle(operation_id="get-item", facts=[fixture]),
+            "auth_protocol": AuthProtocol(status="explicit", prefix=None),
+        },
+    )
+
+    assert normalized.cases[0].request.headers["Authorization"] == "$AUTH_FIXTURE[nonexistent:token]"
+    assert "E-AUTH-NONEXISTENT" in normalized.cases[0].evidence_refs
+    assert normalized.cases[1].request.headers == {}
 
 
 def _build_workflow(tmp_path: Path, *, with_gap: bool = False):
@@ -337,14 +622,18 @@ def test_reviewer_gap_is_retained_after_single_bounded_supplement_pass(tmp_path)
     assert calls["reviewer"] == 1
 
 
-def test_unknown_local_assertion_requirement_falls_back_to_final_reviewer(tmp_path, monkeypatch):
+def test_incomplete_supplement_is_retained_without_second_reviewer(tmp_path, monkeypatch):
     workflow, project_id, operation, calls = _build_workflow(tmp_path)
-    monkeypatch.setattr(workflow, "_supplement_is_locally_complete", lambda _state: False)
+    monkeypatch.setattr(
+        workflow,
+        "_supplement_spec_gaps",
+        lambda _spec, _cases: ["required assertion remains unverified"],
+    )
 
     result = _invoke_approved_workflow(
         workflow,
         {
-            "workflow_id": "workflow-model-review-fallback",
+            "workflow_id": "workflow-local-final-gap",
             "project_id": project_id,
             "operation_id": operation.operation_id,
             "events": [],
@@ -353,8 +642,11 @@ def test_unknown_local_assertion_requirement_falls_back_to_final_reviewer(tmp_pa
     )
 
     assert result["status"] == "FINAL_CASES_READY"
-    assert "final_reviewer_agent" in [event["node"] for event in result["events"]]
-    assert calls == {"requirement": 1, "designer": 2, "reviewer": 2}
+    assert "final_reviewer_agent" not in [event["node"] for event in result["events"]]
+    assert result["reviewer_output"].suggested_case_specs == []
+    assert any("required assertion remains unverified" in gap for gap in result["reviewer_output"].remaining_gaps)
+    assert result["final_cases"].assembly_errors == []
+    assert calls == {"requirement": 1, "designer": 2, "reviewer": 1}
 
 
 def test_downstream_agents_receive_only_nlu_referenced_evidence(tmp_path):
@@ -735,7 +1027,11 @@ def test_final_assembler_removes_invalid_case_when_other_case_preserves_coverage
     )
     valid_case = result["supplemental_cases"][0]
     redundant_invalid = valid_case.model_copy(
-        update={"case_id": "CASE-INVALID-REDUNDANT", "source": "initial"}
+        update={
+            "case_id": "CASE-INVALID-REDUNDANT",
+            "source": "initial",
+            "request": valid_case.request.model_copy(update={"path": "/wrong-path"}),
+        }
     )
     assembled = workflow._final_case_assembler(
         {
@@ -756,6 +1052,67 @@ def test_final_assembler_removes_invalid_case_when_other_case_preserves_coverage
     }
     assert any(
         "Reviewer-invalid cases were removed" in gap
+        for gap in assembled["final_cases"].remaining_gaps
+    )
+
+
+def test_final_assembler_keeps_case_when_only_one_assertion_is_unsupported(tmp_path):
+    workflow, project_id, operation, _ = _build_workflow(tmp_path)
+    result = _invoke_approved_workflow(
+        workflow,
+        {
+            "workflow_id": "workflow-partial-assertion-warning",
+            "project_id": project_id,
+            "operation_id": operation.operation_id,
+            "events": [],
+            "errors": [],
+        },
+    )
+    case = result["draft_cases"].cases[0].model_copy(
+        update={
+            "assertions": [
+                *result["draft_cases"].cases[0].assertions,
+                Assertion(
+                    assertion_id="ASSERT-SECONDARY",
+                    type="json_exists",
+                    path="$.data",
+                    expected=True,
+                    evidence_refs=list(result["draft_cases"].cases[0].evidence_refs),
+                ),
+            ]
+        }
+    )
+    unsupported_id = case.assertions[0].assertion_id
+    assembled = workflow._final_case_assembler(
+        {
+            **result,
+            "draft_cases": result["draft_cases"].model_copy(
+                update={
+                    "cases": [
+                        case,
+                        *[
+                            item
+                            for item in result["draft_cases"].cases
+                            if item.case_id != case.case_id
+                        ],
+                    ]
+                }
+            ),
+            "reviewer_output": ReviewerAgentOutput(
+                invalid_case_ids=[case.case_id],
+                unsupported_assertion_ids=[unsupported_id],
+            ),
+        }
+    )
+
+    assert assembled["status"] == "FINAL_CASES_READY"
+    retained = next(
+        item for item in assembled["final_cases"].cases if item.case_id == case.case_id
+    )
+    assert unsupported_id not in {item.assertion_id for item in retained.assertions}
+    assert retained.assertions
+    assert any(
+        "removed or isolated at assertion level" in gap
         for gap in assembled["final_cases"].remaining_gaps
     )
 

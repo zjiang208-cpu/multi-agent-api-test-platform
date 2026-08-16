@@ -59,6 +59,32 @@ def test_provider_agent_sends_structured_bounded_and_redacted_json():
     assert "object at" not in provider.calls[0]["user"]
 
 
+def test_provider_agent_preserves_safe_fixture_placeholders_for_downstream_agents():
+    provider = FakeLlmProvider(lambda _: _requirement())
+    agent = provider_agent(
+        provider,
+        system_prompt=REQUIREMENT_AGENT_SYSTEM,
+        response_model=RequirementAgentOutput,
+    )
+
+    agent.invoke(
+        {
+            "request": {
+                "headers": {
+                    "Authorization": "$AUTH_FIXTURE[nonexistent:token]",
+                    "X-Internal-Token": "real-secret-token",
+                }
+            },
+            "action": "Authorization: $AUTH_FIXTURE[nonexistent:token]",
+        }
+    )
+
+    prompt = provider.calls[0]["user"]
+    assert "$AUTH_FIXTURE[nonexistent:token]" in prompt
+    assert "real-secret-token" not in prompt
+    assert "X-Internal-Token" in prompt
+
+
 def test_provider_agent_does_not_silently_truncate_supported_requirement_documents():
     provider = FakeLlmProvider(lambda _: _requirement())
     agent = provider_agent(
@@ -119,11 +145,13 @@ def test_provider_agent_records_bounded_call_metrics():
 
 
 def test_case_prompts_publish_executor_constraints():
-    assert WORKFLOW_PROMPT_VERSION == "nlu:1.2.7|designer:1.2.5|reviewer:1.2.5"
+    assert WORKFLOW_PROMPT_VERSION == "nlu:1.5.4|designer:1.5.6|reviewer:1.3.6"
     assert len(PROMPT_MANIFEST["designer_prompt_sha256"]) == 64
     assert "status_code" in DESIGNER_AGENT_SYSTEM
     assert "mode=supplement" in DESIGNER_AGENT_SYSTEM
     assert "严格字段集合" in DESIGNER_AGENT_SYSTEM
     assert "suggested_case_specs" in REVIEWER_AGENT_SYSTEM
     assert "N-1" in REQUIREMENT_AGENT_SYSTEM
-    assert "不是游戏 UI 黑盒测试" in REQUIREMENT_AGENT_SYSTEM
+    assert "资深的接口测试需求分析师兼测试开发工程师" in REQUIREMENT_AGENT_SYSTEM
+    assert "HTTP API 黑盒/契约辅助测试" in REQUIREMENT_AGENT_SYSTEM
+    assert "current_api（如存在）只是同一 Operation 的兼容别名" in REQUIREMENT_AGENT_SYSTEM
