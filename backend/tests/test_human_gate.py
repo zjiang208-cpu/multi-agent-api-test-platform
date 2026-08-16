@@ -369,3 +369,49 @@ async def test_project_batch_approval_accumulates_completed_single_api_queues(tm
     }
     assert report.total_cases == len(all_case_ids)
     assert set(report.by_api) == {operation.operation_id, "get-second-item"}
+
+
+def test_batch_approval_ignores_skipped_queue_items(tmp_path):
+    project_id, operation, snapshot, project_service = _persist_ready_workflow(tmp_path)
+    queue = ApiProcessingQueue(
+        run_id="queue-ready-with-skips",
+        project_id=project_id,
+        source_document_id="document-ready-with-skips",
+        selected_api_ids=[operation.operation_id, "blocked-item"],
+        status="READY_WITH_SKIPS",
+        current_index=2,
+        items=[
+            ApiProcessingItem(
+                api_operation_id=operation.operation_id,
+                order=1,
+                status="COMPLETED",
+                current_stage="COMPLETED",
+                workflow_id=snapshot.workflow_id,
+                requirement_id=snapshot.requirement.requirement_id,
+                requirement_version=snapshot.requirement.version,
+                final_case_set_id=snapshot.final_cases.final_case_set_id,
+            ),
+            ApiProcessingItem(
+                api_operation_id="blocked-item",
+                order=2,
+                status="SKIPPED",
+                current_stage="REVIEWER",
+                error_message="coverage gap retained for review",
+            ),
+        ],
+    )
+    QueueStore(tmp_path, project_id).save(queue)
+
+    approval = BatchHumanGateService(project_service, tmp_path).approve(
+        project_id,
+        queue.run_id,
+        target_environment="local",
+        base_url="http://127.0.0.1:8081",
+        case_ids=[case.case_id for case in snapshot.final_cases.cases],
+        case_count=len(snapshot.final_cases.cases),
+        side_effect_case_ids=[],
+        side_effects_confirmed=False,
+    )
+
+    assert approval.final_case_set_ids == [snapshot.final_cases.final_case_set_id]
+    assert approval.selected_case_count == len(snapshot.final_cases.cases)

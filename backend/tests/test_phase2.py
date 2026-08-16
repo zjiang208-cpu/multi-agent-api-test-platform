@@ -6,10 +6,12 @@ import pytest
 from app.core.config import AppSettings
 from app.main import create_app
 from app.models.contracts import OperationContract
+from app.models.queue import ApiProcessingItem, ApiProcessingQueue
 from app.models.requirements import RequirementDocument
 from app.requirements.document_parser import MAX_DOCUMENT_BYTES
 from app.requirements.openapi import OpenApiLoader, SourceLoadError
 from app.requirements.yaml_store import YamlArtifactStore
+from app.workflow.queue_store import QueueStore
 
 from tests.test_phase1 import project_payload
 
@@ -227,6 +229,43 @@ def test_processing_queue_accepts_only_one_operation_per_flow(tmp_path):
     project_cases = client.get(f"/api/projects/{created.json()['project_id']}/cases/final")
     assert project_cases.status_code == 200
     assert project_cases.json() == []
+
+
+def test_blocked_processing_queue_can_be_skipped_through_api(tmp_path):
+    settings = AppSettings(data_dir=tmp_path / "data")
+    client = TestClient(create_app(settings=settings))
+    created = client.post("/api/projects", json=project_payload())
+    assert created.status_code == 201
+    project_id = created.json()["project_id"]
+    queue = ApiProcessingQueue(
+        run_id="queue-blocked-api",
+        project_id=project_id,
+        source_document_id="document-blocked-api",
+        selected_api_ids=["blocked-item"],
+        status="BLOCKED",
+        items=[
+            ApiProcessingItem(
+                api_operation_id="blocked-item",
+                order=1,
+                status="BLOCKED",
+                current_stage="REVIEWER",
+                workflow_id="workflow-blocked-api",
+                final_case_set_id="final-blocked-api",
+                error_message="review gap",
+            )
+        ],
+    )
+    QueueStore(settings.resolved_data_dir(), project_id).save(queue)
+
+    response = client.post(
+        f"/api/projects/{project_id}/processing-queues/{queue.run_id}/skip-current",
+        json={"reason": "defer for later review"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "SKIPPED"
+    assert response.json()["items"][0]["status"] == "SKIPPED"
+    assert response.json()["items"][0]["workflow_id"] == "workflow-blocked-api"
 
 
 def test_requirement_document_upload_is_bounded(tmp_path):

@@ -4,6 +4,30 @@
 通过多源证据完成接口识别、需求分析、测试点提取、用例设计、批量执行与报告生成。
 平台与具体业务系统解耦，当前主流程使用 Markdown 格式的接口需求文档。
 
+> 从需求文档到可执行测试报告的接口测试工作台。
+
+## 产品演示
+
+本仓库包含一条完整的 7 阶段演示流程：需求文档、接口选择、需求分析、需求确认、
+用例设计、执行确认、测试执行和测试报告。截图按实际运行顺序整理在
+[`docs/screenshots/`](docs/screenshots/)，流程说明和部署边界见
+[`docs/workflow.md`](docs/workflow.md)。
+
+![项目概览](docs/screenshots/01-project-overview.png)
+
+![需求确认](docs/screenshots/06-requirement-confirmation.png)
+
+![测试报告](docs/screenshots/10-test-report.png)
+
+## 核心能力
+
+- Markdown、OpenAPI 和单接口 YAML 契约导入
+- NLU、Designer、Reviewer 三个智能角色协作
+- 接口识别、测试点提取和测试用例设计
+- 人工确认节点和副作用用例保护
+- 确定性 HTTP 执行、鉴权注入和断言评估
+- 批量执行结果与 HTML 测试报告
+
 当前实现阶段记录在：
 
 - `CURRENT_ARCHITECTURE.md`
@@ -32,6 +56,10 @@ npm run dev
 前端默认地址为 `http://127.0.0.1:5173`，后端默认地址为
 `http://127.0.0.1:8000`，被测服务默认地址为 `http://127.0.0.1:8081`。
 如需使用其他前端端口，请在启动开发服务器前设置 `VITE_PORT`。
+
+> 本地开发时，Vite 会把 `/api` 请求代理到后端。部署到 GitHub Pages 时只能展示静态页面，
+> 不能直接运行 FastAPI 和本地 `.data` 存储；完整在线 Demo 需要同时部署后端，并配置反向代理或
+> 生产环境 API 地址。详细说明见 [`docs/workflow.md`](docs/workflow.md)。
 
 当前实现包含项目与设置管理、多源证据采集、需求文档解析、接口级顺序处理、
 测试点与测试用例设计、人工执行确认、确定性批量执行、断言评估和报告中心。
@@ -113,3 +141,17 @@ LLM 配置遵循平台的进程环境变量约定：唯一的模型凭证变量�
   "inject": {"location": "header", "name": "Authorization", "prefix": "Bearer"}
 }
 ```
+
+## 公开仓库安全清单
+
+- 不要提交 `.env`、真实账号、密码、Token、API Key 或业务需求原文。
+- `.env.example` 只保留变量名和空值，真实值放在本机环境或部署平台的 Secret 中。
+- `.data/`、`output/`、`tmp/` 和本地评测指标属于运行产物，不作为源码发布。
+- 执行真实接口前，请确认目标环境、鉴权配置和副作用用例；建议只使用隔离测试环境。
+
+## 项目文档
+
+- [`docs/workflow.md`](docs/workflow.md)：产品流程、截图说明和部署建议
+- [`CURRENT_ARCHITECTURE.md`](CURRENT_ARCHITECTURE.md)：当前架构和实现边界
+- [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md)：后续演进计划
+- [`SECURITY.md`](SECURITY.md)：安全问题反馈方式
