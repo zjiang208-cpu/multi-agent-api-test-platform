@@ -6,13 +6,6 @@
 
 > 从需求文档到可执行测试报告的接口测试工作台。
 
-## 产品演示
-
-完整的 7 阶段产品演示、截图解释和阅读顺序见
-[`SHOWCASE.md`](SHOWCASE.md)。原始截图资源位于
-[`docs/screenshots/`](docs/screenshots/)，流程和部署边界见
-[`docs/workflow.md`](docs/workflow.md)。
-
 ## 核心能力
 
 - Markdown、OpenAPI 和单接口 YAML 契约导入
