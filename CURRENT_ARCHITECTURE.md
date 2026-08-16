@@ -103,8 +103,8 @@ The current test flow is:
 5. Ask the AI Designer for structured test cases with evidence references.
 6. Run a LangGraph workflow with NLU → Designer → semantic Reviewer. The
    Reviewer does not score or write complete cases; it emits bounded case
-   specifications. Designer may perform one supplement pass, followed by a final
-   Reviewer check.
+   specifications. Designer may perform one supplement pass, followed by
+   deterministic local validation; no second Reviewer model call is made.
 7. Assemble immutable Final Cases. The result enters `READY` only when all test
    points are covered and no hard validation or Reviewer error remains; questions
    already accepted at Human Gate #1 stay visible as warnings. Otherwise it enters
@@ -263,7 +263,7 @@ LangGraph state and stage contracts:
 
 ```text
 NLU Agent → Designer Agent → Reviewer Agent
-→ optional bounded Designer supplement → final Reviewer
+→ optional bounded Designer supplement → local validation
 → Final Cases → Human Gate → Executor → Assertion → Report
 ```
 

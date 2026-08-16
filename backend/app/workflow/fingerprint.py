@@ -16,6 +16,9 @@ def requirement_fingerprint(requirement: RequirementDocument) -> str:
         "expected_behaviors": requirement.expected_behaviors,
         "conflicts": requirement.conflicts,
         "unresolved_questions": requirement.unresolved_questions,
+        "auth_protocol": requirement.auth_protocol.model_dump(mode="json")
+        if requirement.auth_protocol
+        else None,
         "evidence_refs": [
             {
                 "source_type": item.source_type,
@@ -27,4 +30,3 @@ def requirement_fingerprint(requirement: RequirementDocument) -> str:
     }
     canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-

@@ -9,7 +9,7 @@ from typing import Any, Generic, TypeVar
 from langchain_core.runnables import Runnable, RunnableLambda
 from pydantic import BaseModel
 
-from app.core.security import is_sensitive_key, sanitize_text
+from app.core.security import SAFE_FIXTURE_VALUE, is_sensitive_key, sanitize_text
 from app.providers.llm import CallBudget, LlmProvider, ProviderError, StructuredOutputParser
 
 T = TypeVar("T", bound=BaseModel)
@@ -149,7 +149,15 @@ def _safe_jsonable(value: Any) -> Any:
         return _safe_jsonable(value.model_dump(mode="json", by_alias=True))
     if isinstance(value, Mapping):
         return {
-            str(key): "<redacted>" if is_sensitive_key(str(key)) else _safe_jsonable(item)
+            str(key): (
+                item
+                if is_sensitive_key(str(key))
+                and isinstance(item, str)
+                and SAFE_FIXTURE_VALUE.fullmatch(item.strip())
+                else "<redacted>"
+                if is_sensitive_key(str(key))
+                else _safe_jsonable(item)
+            )
             for key, item in value.items()
         }
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):

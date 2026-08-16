@@ -14,6 +14,7 @@ SUPPORTED_ASSERTIONS = {
     "json_type",
     "json_contains",
     "json_exists",
+    "json_array_sorted",
     "header_value",
     "response_schema",
     "response_time_ms",
@@ -116,10 +117,10 @@ def validate_case(
         if (
             assertion.type == "json_exists"
             and assertion.expected is not None
-            and assertion.expected is not True
+            and assertion.expected not in {True, False}
         ):
             errors.append(
-                f"json_exists only supports expected=true or null: {assertion.assertion_id}"
+                f"json_exists only supports expected=true, false, or null: {assertion.assertion_id}"
             )
         if assertion.type == "status_code" and assertion.expected is None:
             errors.append(f"status assertion requires expected status: {assertion.assertion_id}")
@@ -129,6 +130,11 @@ def validate_case(
             errors.append(f"header assertion requires a response header name: {assertion.assertion_id}")
         if assertion.type == "json_type" and assertion.expected not in JSON_TYPES:
             errors.append(f"json_type has unsupported expected type: {assertion.assertion_id}")
+        if assertion.type == "json_array_sorted":
+            errors.extend(
+                f"json_array_sorted {error}: {assertion.assertion_id}"
+                for error in _validate_array_sorted_spec(assertion.expected)
+            )
         if assertion.type == "response_schema" and not isinstance(assertion.expected, Mapping):
             errors.append(f"response_schema requires an object schema: {assertion.assertion_id}")
         if (
@@ -269,4 +275,27 @@ def _validate_response_schema(schema: Mapping[str, Any], location: str = "$") ->
     enum = schema.get("enum")
     if enum is not None and not isinstance(enum, list):
         errors.append(f"requires a list at {location}.enum")
+    return errors
+
+
+def _validate_array_sorted_spec(expected: Any) -> list[str]:
+    if not isinstance(expected, Mapping):
+        return ["requires an object spec"]
+    fields = expected.get("fields")
+    if not isinstance(fields, list) or not fields:
+        return ["requires a non-empty fields list"]
+    errors: list[str] = []
+    for index, field in enumerate(fields):
+        if not isinstance(field, Mapping):
+            errors.append(f"fields[{index}] requires an object")
+            continue
+        path = field.get("path")
+        order = str(field.get("order", "")).lower()
+        if not isinstance(path, str) or not _SUPPORTED_JSON_PATH.fullmatch(path):
+            errors.append(f"fields[{index}].path must be a supported $. path")
+        if order not in {"asc", "desc"}:
+            errors.append(f"fields[{index}].order must be asc or desc")
+    unknown_keys = set(expected) - {"fields"}
+    if unknown_keys:
+        errors.append(f"uses unsupported keys: {sorted(unknown_keys)}")
     return errors

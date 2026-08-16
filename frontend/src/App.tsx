@@ -60,18 +60,75 @@ type ProjectEditor = {
   authInjectPrefix: string;
 };
 
-const navItems: Array<{ key: PageKey; label: string; shortLabel: string }> = [
-  { key: "overview", label: "项目概览", shortLabel: "概" },
-  { key: "documents", label: "需求文档", shortLabel: "文" },
-  { key: "operations", label: "接口目录", shortLabel: "接" },
-  { key: "requirements", label: "需求分析", shortLabel: "需" },
-  { key: "cases", label: "测试用例", shortLabel: "例" },
-  { key: "execution", label: "执行中心", shortLabel: "执" },
-  { key: "reports", label: "报告中心", shortLabel: "报" },
-  { key: "settings", label: "项目设置", shortLabel: "设" },
+type NavIconName = "overview" | "documents" | "operations" | "requirements" | "cases" | "execution" | "reports" | "settings";
+type NavItem = { key: PageKey; label: string; icon: NavIconName };
+
+const navGroups: Array<{ label: string; items: NavItem[] }> = [
+  { label: "工作台", items: [{ key: "overview", label: "项目概览", icon: "overview" }] },
+  {
+    label: "测试流程",
+    items: [
+      { key: "documents", label: "需求文档", icon: "documents" },
+      { key: "operations", label: "接口目录", icon: "operations" },
+      { key: "requirements", label: "需求分析", icon: "requirements" },
+      { key: "cases", label: "测试用例", icon: "cases" },
+      { key: "execution", label: "执行中心", icon: "execution" },
+      { key: "reports", label: "报告中心", icon: "reports" },
+    ],
+  },
+  { label: "管理", items: [{ key: "settings", label: "项目设置", icon: "settings" }] },
 ];
 
+const navItems = navGroups.flatMap((group) => group.items);
+
 const workflowSteps = ["需求文档", "接口选择", "需求确认", "用例设计", "执行确认", "测试执行", "测试报告"];
+
+const overviewActions: Array<{ page: PageKey; label: string; description: string }> = [
+  { page: "documents", label: "上传需求文档", description: "上传或粘贴 Markdown 需求，识别其中的接口与业务规则。" },
+  { page: "operations", label: "选择待测接口", description: "从已识别的接口中选择一个，进入顺序分析流程。" },
+  { page: "requirements", label: "确认接口需求", description: "检查提取的业务规则、测试点与辅助证据。" },
+  { page: "cases", label: "查看用例设计", description: "查看当前接口生成并经过语义审查的测试用例。" },
+  { page: "execution", label: "确认执行范围", description: "确认目标环境、用例数量以及可能产生的副作用。" },
+  { page: "execution", label: "查看测试执行", description: "查看已批准批次的执行状态与 HTTP 响应。" },
+  { page: "reports", label: "查看测试报告", description: "查看执行结果、断言详情并导出 HTML 报告。" },
+];
+
+function NavIcon({ name }: { name: NavIconName }) {
+  const commonProps = {
+    className: "nav-icon",
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.8,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+    focusable: false,
+  };
+
+  switch (name) {
+    case "overview":
+      return <svg {...commonProps}><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></svg>;
+    case "documents":
+      return <svg {...commonProps}><path d="M6 3.5h8l4 4V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z" /><path d="M14 3.5V8h4M8 12h6M8 16h8" /></svg>;
+    case "operations":
+      return <svg {...commonProps}><circle cx="5" cy="6" r="2" /><circle cx="19" cy="6" r="2" /><circle cx="12" cy="18" r="2" /><path d="M7 6h10M6.5 7.5l4.3 8.7M17.5 7.5l-4.3 8.7" /></svg>;
+    case "requirements":
+      return <svg {...commonProps}><path d="m4 6 1.5 1.5L8.5 4.5M11 6h9M4 12l1.5 1.5 3-3M11 12h9M4 18l1.5 1.5 3-3M11 18h9" /></svg>;
+    case "cases":
+      return <svg {...commonProps}><path d="M9 5h6M9 3h6v4H9z" /><path d="M7 5H5.5A1.5 1.5 0 0 0 4 6.5v13A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5v-13A1.5 1.5 0 0 0 18.5 5H17" /><path d="m8 14 2.5 2.5L16 11" /></svg>;
+    case "execution":
+      return <svg {...commonProps}><circle cx="12" cy="12" r="9" /><path d="m10 8 6 4-6 4Z" /></svg>;
+    case "reports":
+      return <svg {...commonProps}><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></svg>;
+    case "settings":
+      return <svg {...commonProps}><path d="M4 6h8M16 6h4M4 12h3M11 12h9M4 18h10M18 18h2" /><circle cx="14" cy="6" r="2" /><circle cx="9" cy="12" r="2" /><circle cx="16" cy="18" r="2" /></svg>;
+  }
+}
+
+function BrandMark() {
+  return <svg className="brand-symbol" viewBox="0 0 40 40" fill="none" aria-hidden="true" focusable="false"><circle cx="10" cy="12" r="3" /><circle cx="30" cy="10" r="3" /><circle cx="29" cy="29" r="3" /><path d="M13 12h7c5 0 7-2 7-2M12 15l13 11M29 13v13" /></svg>;
+}
 
 function splitLines(value: string): string[] {
   return value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
@@ -142,7 +199,9 @@ function statusText(status: string): string {
     PENDING: "等待处理",
     RUNNING: "处理中",
     READY_FOR_EXECUTION: "待执行确认",
+    READY_WITH_SKIPS: "部分接口已跳过",
     BLOCKED: "需要人工处理",
+    SKIPPED: "已跳过",
     COMPLETED: "已完成",
     NLU: "需求分析",
     DESIGNER: "用例设计",
@@ -153,6 +212,10 @@ function statusText(status: string): string {
     error: "执行错误",
   };
   return labels[status] ?? status;
+}
+
+function isQueueTerminal(status: string): boolean {
+  return ["READY_FOR_EXECUTION", "READY_WITH_SKIPS", "SKIPPED", "CANCELLED"].includes(status);
 }
 
 function methodClass(method: string): string {
@@ -266,15 +329,16 @@ export default function App() {
     () => new Set(finalCaseSets.map((item) => item.api_operation_id).filter((item): item is string => Boolean(item))),
     [finalCaseSets],
   );
-  const activeFlowOperationId = queue && !["READY_FOR_EXECUTION", "CANCELLED"].includes(queue.status)
-    ? queue.items[0]?.api_operation_id ?? null
+  const activeFlowOperationId = queue && !isQueueTerminal(queue.status)
+    ? queue.items[queue.current_index]?.api_operation_id ?? null
     : null;
   const sideEffectCaseIds = useMemo(
     () => allFinalCases.filter((item) => selectedCaseIds.includes(item.case_id) && item.side_effect).map((item) => item.case_id),
     [allFinalCases, selectedCaseIds],
   );
   const activeNav = navItems.find((item) => item.key === page) ?? navItems[0];
-  const currentStep = execution ? 6 : batchApproval ? 5 : queue?.status === "READY_FOR_EXECUTION" ? 4 : startingWorkflow || workflow?.status === "WAITING_REQUIREMENT_APPROVAL" ? 2 : workflow ? 3 : parsedDocument ? 1 : 0;
+  const currentStep = execution ? 6 : batchApproval ? 5 : ["READY_FOR_EXECUTION", "READY_WITH_SKIPS"].includes(queue?.status ?? "") ? 4 : startingWorkflow || workflow?.status === "WAITING_REQUIREMENT_APPROVAL" ? 2 : workflow ? 3 : parsedDocument ? 1 : 0;
+  const overviewAction = overviewActions[Math.min(currentStep, overviewActions.length - 1)];
 
   useEffect(() => {
     api.projects()
@@ -353,7 +417,7 @@ export default function App() {
         ]);
         if (cancelled) return;
         const queueOperations = restoredOperations.filter((operation) => latestQueue.selected_api_ids.includes(operation.operation_id));
-        setSelectedOperationIds(latestQueue.status === "READY_FOR_EXECUTION" ? [] : latestQueue.selected_api_ids.slice(0, 1));
+        setSelectedOperationIds(isQueueTerminal(latestQueue.status) ? [] : latestQueue.selected_api_ids.slice(0, 1));
         setSelectedOperation(queueOperations.find((operation) => operation.operation_id === currentItem?.api_operation_id) ?? queueOperations[0] ?? null);
         setQueue(latestQueue);
         setWorkflow(restoredWorkflow);
@@ -388,12 +452,13 @@ export default function App() {
   }, [workflow?.workflow_id, finalCases?.final_case_set_id, finalCaseSets.length]);
 
   useEffect(() => {
-    if (!selectedProject || queue?.status !== "READY_FOR_EXECUTION") return;
+    const queueRunId = queue?.run_id;
+    if (!selectedProject || !queueRunId || !["READY_FOR_EXECUTION", "READY_WITH_SKIPS"].includes(queue?.status ?? "")) return;
     let cancelled = false;
     const projectId = selectedProject.project_id;
-    void api.reports(projectId)
+      void api.reports(projectId)
       .then((reports) => reports
-        .filter((report) => report.queue_run_id === queue.run_id)
+        .filter((report) => report.queue_run_id === queueRunId)
         .sort((left, right) => Date.parse(right.generated_at) - Date.parse(left.generated_at))[0] ?? null)
       .then(async (report) => report ? { report, run: await api.run(projectId, report.run_id) } : null)
       .then((restored) => {
@@ -993,20 +1058,121 @@ export default function App() {
 
   async function retryWorkflowQueue() {
     if (!selectedProject || !queue) return;
+    const currentItem = queue.items[queue.current_index];
+    const canReuseNlu = Boolean(
+      currentItem?.workflow_id
+      && ["FAILED", "BLOCKED"].includes(currentItem.status)
+      && ["DESIGNER", "REVIEWER"].includes(currentItem.current_stage),
+    );
     setBusy(true);
     setStartingWorkflow(true);
-    setMessage("正在重新分析当前接口的需求…");
+    setMessage(canReuseNlu ? "正在复用已缓存的需求分析，重试用例设计与检查…" : "正在重新分析当前接口的需求…");
     try {
-      const started = await api.startProcessingQueue(selectedProject.project_id, queue.run_id);
-      setQueue(started.queue);
-      setWorkflow(started.workflow);
-      setPage("requirements");
-      setMessage("当前接口已重新生成需求，请确认后继续。");
+      if (!canReuseNlu) {
+        const started = await api.startProcessingQueue(selectedProject.project_id, queue.run_id);
+        setQueue(started.queue);
+        setWorkflow(started.workflow);
+        setPage("requirements");
+        setMessage("当前接口已重新生成需求，请确认后继续。");
+        return;
+      }
+
+      const retried = await api.retryCachedDesign(selectedProject.project_id, queue.run_id);
+      setQueue(retried.queue);
+      setWorkflow(retried.workflow);
+      const settledQueue = await waitForQueueSettled(
+        selectedProject.project_id,
+        retried.queue.run_id,
+        600,
+      ) ?? retried.queue;
+      setQueue(settledQueue);
+      const settledItem = settledQueue.items[settledQueue.current_index];
+      if (["READY_FOR_EXECUTION", "READY_WITH_SKIPS"].includes(settledQueue.status)) {
+        const cases = await api.projectFinalCases(selectedProject.project_id);
+        setFinalCaseSets(cases);
+        setSelectedCaseIds(cases.flatMap((item) => item.cases).map((item) => item.case_id));
+        setSelectedOperationIds([]);
+        setSelectedOperation(null);
+        setPage("cases");
+        setMessage("已复用需求分析结果并完成用例设计，可以继续执行确认。");
+      } else if (settledItem?.workflow_id) {
+        const settledWorkflow = await api.workflowRun(selectedProject.project_id, settledItem.workflow_id);
+        setWorkflow(settledWorkflow);
+        setSelectedOperation(operations.find((item) => item.operation_id === settledItem.api_operation_id) ?? selectedOperation);
+        setPage("requirements");
+        setMessage(
+          settledQueue.status === "BLOCKED"
+            ? `已复用需求分析结果，但仍有待处理缺口：${settledItem.error_message ?? "请查看审查结果"}`
+            : settledQueue.status === "FAILED"
+              ? `复用需求分析后的用例设计仍失败：${settledItem.error_message ?? "后台任务失败"}`
+              : "已复用需求分析结果，当前接口已进入下一节点。",
+        );
+      } else {
+        setPage("requirements");
+        setMessage("后台仍在重试用例设计，稍后刷新即可查看结果。");
+      }
     } catch (error) {
       setMessage(`重试失败：${error instanceof Error ? error.message : "分析任务执行失败"}`);
     } finally {
       setBusy(false);
       setStartingWorkflow(false);
+    }
+  }
+
+  async function skipWorkflowQueue() {
+    if (!selectedProject || !queue || queue.status !== "BLOCKED") return;
+    setBusy(true);
+    setMessage("正在跳过当前接口，并保留其审查缺口…");
+    try {
+      let settledQueue = await api.skipProcessingQueue(
+        selectedProject.project_id,
+        queue.run_id,
+        "用户确认跳过当前需要人工处理的接口",
+      );
+      setQueue(settledQueue);
+      if (settledQueue.status === "RUNNING") {
+        settledQueue = await waitForQueueSettled(
+          selectedProject.project_id,
+          settledQueue.run_id,
+          600,
+        ) ?? settledQueue;
+        setQueue(settledQueue);
+      }
+      const currentItem = settledQueue.items[settledQueue.current_index];
+      if (settledQueue.status === "WAITING_REQUIREMENT_APPROVAL" && currentItem?.workflow_id) {
+        const nextWorkflow = await api.workflowRun(selectedProject.project_id, currentItem.workflow_id);
+        setWorkflow(nextWorkflow);
+        setSelectedOperation(operations.find((item) => item.operation_id === currentItem.api_operation_id) ?? null);
+        setSelectedOperationIds([currentItem.api_operation_id]);
+        setPage("requirements");
+        setMessage(`当前接口已跳过，下一接口等待需求确认（${settledQueue.current_index + 1} / ${settledQueue.items.length}）。`);
+        return;
+      }
+      if (settledQueue.status === "BLOCKED" && currentItem?.workflow_id) {
+        const nextWorkflow = await api.workflowRun(selectedProject.project_id, currentItem.workflow_id);
+        setWorkflow(nextWorkflow);
+        setSelectedOperation(operations.find((item) => item.operation_id === currentItem.api_operation_id) ?? null);
+        setSelectedOperationIds([currentItem.api_operation_id]);
+        setPage("requirements");
+        setMessage(`下一个接口也需要人工处理：${currentItem.error_message ?? "请查看审查缺口"}`);
+        return;
+      }
+      const cases = await api.projectFinalCases(selectedProject.project_id);
+      setFinalCaseSets(cases);
+      setSelectedCaseIds(cases.flatMap((item) => item.cases).map((item) => item.case_id));
+      setSelectedOperationIds([]);
+      setSelectedOperation(null);
+      if (cases.length) {
+        setPage("cases");
+        setMessage(settledQueue.status === "READY_WITH_SKIPS" ? "当前接口已跳过，已生成接口仍可进入批量执行。" : "当前接口已跳过，可继续选择下一个接口。");
+      } else {
+        setPage("operations");
+        setMessage("当前接口已跳过，可继续选择下一个接口；原审查结果仍已保留。");
+      }
+    } catch (error) {
+      setMessage(`跳过失败：${error instanceof Error ? error.message : "无法跳过当前接口"}`);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -1024,13 +1190,33 @@ export default function App() {
     setMessage(`已切换到项目“${project.name}”。`);
   }
 
+  function prepareNewCaseSelection() {
+    setBatchApproval(null);
+    setExecution(null);
+    setSelectedResult(null);
+    setSideEffectsConfirmed(false);
+  }
+
   function toggleCase(caseId: string) {
+    prepareNewCaseSelection();
     setSelectedCaseIds((current) => current.includes(caseId) ? current.filter((id) => id !== caseId) : [...current, caseId]);
+  }
+
+  function toggleCaseSet(caseSet: FinalCaseSet) {
+    const ids = caseSet.cases.map((item) => item.case_id);
+    prepareNewCaseSelection();
+    setSelectedCaseIds((current) => {
+      const allSelected = ids.every((id) => current.includes(id));
+      return allSelected
+        ? current.filter((id) => !ids.includes(id))
+        : [...current, ...ids.filter((id) => !current.includes(id))];
+    });
   }
 
   function toggleAllCases() {
     const ids = allFinalCases.map((item) => item.case_id);
-    setSelectedCaseIds((current) => current.length === ids.length ? [] : ids);
+    prepareNewCaseSelection();
+    setSelectedCaseIds((current) => ids.every((id) => current.includes(id)) ? [] : ids);
   }
 
   function toggleOperation(operationId: string) {
@@ -1064,7 +1250,7 @@ export default function App() {
       const currentItem = settledQueue.items[settledQueue.current_index];
       const currentOperationId = currentItem?.api_operation_id;
       setSelectedOperation(operations.find((item) => item.operation_id === currentOperationId) ?? selectedOperation);
-      if (settledQueue.status === "READY_FOR_EXECUTION") {
+      if (["READY_FOR_EXECUTION", "READY_WITH_SKIPS"].includes(settledQueue.status)) {
         const cases = await api.projectFinalCases(selectedProject.project_id);
         setFinalCaseSets(cases);
         setSelectedCaseIds(cases.flatMap((item) => item.cases).map((item) => item.case_id));
@@ -1130,10 +1316,12 @@ export default function App() {
     setMessage(autoRegression ? "正在执行已批准且 需求未变化的自动回归…" : "正在一次性批量执行已确认用例…");
     try {
       const result = autoRegression ? await api.autoRegressBatch(selectedProject.project_id, batchApproval.approval_id) : await api.executeBatch(selectedProject.project_id, batchApproval.approval_id);
+      setBatchApproval(null);
       setExecution(result);
       setPage("reports");
       setMessage(`执行完成：${result.run.passed_count} 条 PASS，${result.run.failed_count} 条 FAIL，${result.run.error_count} 条错误。`);
     } catch (error) {
+      setBatchApproval(null);
       setMessage(error instanceof Error ? error.message : "执行失败");
     } finally {
       setBusy(false);
@@ -1277,7 +1465,37 @@ ${resultSections}</main></body></html>`;
   function renderOverview() {
     if (showCreateForm) return renderCreateForm();
     if (!selectedProject) return renderProjectEmpty();
-    return <><div className="page-heading"><div><span className="kicker">工作台</span><h2>项目概览</h2><p>需求文档是主输入，项目配置只为后续证据检索和确定性执行提供上下文。</p></div><button className="button button-primary" onClick={() => setPage("documents")}>解析需求文档</button></div><div className="stats-grid stats-grid-three"><div className="metric-card"><span>可测试接口</span><strong>{operations.length}</strong><small>从需求文档识别</small></div><div className="metric-card"><span>当前需求文档</span><strong>{parsedDocument ? "已解析" : "—"}</strong><small>{parsedDocument?.filename ?? "尚未导入文档"}</small></div><div className="metric-card"><span>项目用例</span><strong>{allFinalCases.length}</strong><small>{finalCaseSets.length ? `已完成 ${finalCaseSets.length} 个接口` : "尚未设计"}</small></div></div><div className="overview-grid"><section className="card workflow-card"><div className="card-heading"><div><span className="kicker">当前流程</span><h3>{selectedOperation ? `${selectedOperation.method} ${selectedOperation.path}` : "还未选择接口"}</h3></div><span className={`status-badge ${finalCases ? "status-ready" : "status-neutral"}`}>{finalCases ? statusText(finalCases.status) : parsedDocument ? "文档已解析" : "待开始"}</span></div><div className="mini-flow">{workflowSteps.slice(0, 5).map((step, index) => <span className={index <= currentStep ? "done" : ""} key={step}>{step}</span>)}</div><p className="card-copy">按“文档解析 → 接口选择 → 需求确认 → 用例设计 → 执行确认 → 测试报告”完成一次测试。</p><button className="button button-secondary" onClick={() => setPage(parsedDocument ? (selectedOperation ? "requirements" : "operations") : "documents")}>{parsedDocument ? (selectedOperation ? "查看当前进度" : "选择接口") : "开始解析需求文档"}</button></section><section className="card quick-card"><div className="card-heading"><div><span className="kicker">快速操作</span><h3>下一步做什么</h3></div></div><button className="quick-action" onClick={() => setPage("documents")}><span>解析需求文档</span><small>上传或粘贴多格式需求</small></button><button className="quick-action" onClick={() => setPage("operations")}><span>选择待测接口</span><small>关联接口契约与辅助证据</small></button><button className="quick-action" onClick={() => setPage("execution")} disabled={!finalCaseSets.length}><span>进入执行中心</span><small>确认环境、数量和副作用</small></button></section></div></>;
+    return <>
+      <div className="page-heading overview-heading">
+        <div>
+          <span className="kicker">当前项目</span>
+          <h2>{selectedProject.name}</h2>
+          <p>从 Markdown 需求到批量执行与测试报告，当前任务按接口顺序推进。</p>
+        </div>
+        <button className="button button-primary" onClick={() => setPage(overviewAction.page)}>{overviewAction.label}</button>
+      </div>
+      <div className="stats-grid stats-grid-three">
+        <div className="metric-card"><span>可测试接口</span><strong>{operations.length}</strong><small>从需求文档识别</small></div>
+        <div className="metric-card"><span>当前需求文档</span><strong>{parsedDocument ? "已解析" : "—"}</strong><small>{parsedDocument?.filename ?? "尚未上传文档"}</small></div>
+        <div className="metric-card"><span>项目用例</span><strong>{allFinalCases.length}</strong><small>{finalCaseSets.length ? `已完成 ${finalCaseSets.length} 个接口` : "尚未生成用例"}</small></div>
+      </div>
+      <section className="card workflow-card">
+        <div className="card-heading">
+          <div>
+            <span className="kicker">当前任务</span>
+            <h3>{selectedOperation ? `${selectedOperation.method} ${selectedOperation.path}` : parsedDocument?.filename ?? "等待上传需求文档"}</h3>
+          </div>
+          <span className={`status-badge ${currentStep >= 4 ? "status-ready" : currentStep > 0 ? "status-warning" : "status-neutral"}`}>{workflowSteps[currentStep]}</span>
+        </div>
+        <div className="next-step-panel">
+          <div>
+            <span>下一步</span>
+            <strong>{overviewAction.label}</strong>
+          </div>
+          <p>{overviewAction.description}</p>
+        </div>
+      </section>
+    </>;
   }
 
   function renderOperations() {
@@ -1327,7 +1545,16 @@ ${resultSections}</main></body></html>`;
   function renderWorkflowFailure() {
     if (!queue) return null;
     const item = queue.items[queue.current_index];
-    return <><div className="page-heading"><div><span className="kicker">需求确认</span><h2>顺序分析失败</h2><p>后台分析任务已返回失败状态，当前队列和失败原因已保留，没有自动跳回接口目录。</p></div><span className="status-badge status-danger">失败</span></div><section className="card workflow-failure-card"><div className="workflow-loading-mark">!</div><h3>当前接口未进入下一节点</h3><p>{item?.error_message ?? message}</p><div className="workflow-start-facts"><div><span>处理队列</span><strong>{queue.items.length} 个接口</strong></div><div><span>当前接口</span><strong>第 {queue.current_index + 1} 个</strong></div><div><span>队列状态</span><strong>{statusText(queue.status)}</strong></div></div><div className="gate-actions"><button className="button button-primary" onClick={() => void retryWorkflowQueue()} disabled={busy}>重试当前接口</button><button className="button button-secondary" onClick={() => setPage("operations")} disabled={busy}>返回接口目录</button></div></section></>;
+    const canReuseNlu = Boolean(
+      item?.workflow_id
+      && ["FAILED", "BLOCKED"].includes(item.status)
+      && ["DESIGNER", "REVIEWER"].includes(item.current_stage),
+    );
+    return <><div className="page-heading"><div><span className="kicker">需求确认</span><h2>{canReuseNlu ? "用例设计失败" : "顺序分析失败"}</h2><p>{canReuseNlu ? "NLU 需求、证据和测试点已保存；重试将直接复用这些结果，不再重复调用需求分析。" : "后台分析任务已返回失败状态，当前队列和失败原因已保留。你可以重试当前接口，也可以跳过它继续处理后续接口。"}</p></div><span className="status-badge status-danger">失败</span></div><section className="card workflow-failure-card"><div className="workflow-loading-mark">!</div><h3>当前接口未进入下一节点</h3><p>{item?.error_message ?? message}</p><div className="workflow-start-facts"><div><span>处理队列</span><strong>{queue.items.length} 个接口</strong></div><div><span>当前接口</span><strong>第 {queue.current_index + 1} 个接口</strong></div><div><span>队列状态</span><strong>{statusText(queue.status)}</strong></div></div><div className="gate-actions"><button className="button button-primary" onClick={() => void retryWorkflowQueue()} disabled={busy}>{canReuseNlu ? "复用需求结果重试" : "重新分析当前接口"}</button>{queue.status === "BLOCKED" && <button className="button button-secondary" onClick={() => void skipWorkflowQueue()} disabled={busy}>跳过并继续</button>}<button className="button button-ghost" onClick={() => setPage("operations")} disabled={busy}>返回接口目录</button></div></section></>;
+  }
+
+  function renderWorkflowSkipped() {
+    return <><div className="page-heading"><div><span className="kicker">需求确认</span><h2>接口已跳过</h2><p>当前接口的审查缺口已保留，未冻结为可执行用例；你可以继续选择其他接口。</p></div><span className="status-badge status-warning">已跳过</span></div><section className="card workflow-failure-card"><div className="workflow-loading-mark">↷</div><h3>当前接口未进入执行用例库</h3><p>跳过只会解除队列阻塞，不会改变 Reviewer 的审查结论。</p><div className="gate-actions"><button className="button button-primary" onClick={() => setPage("operations")}>继续选择接口</button><button className="button button-secondary" onClick={() => setPage("cases")} disabled={!finalCaseSets.length}>查看已生成用例</button></div></section></>;
   }
 
   function renderRequirements() {
@@ -1342,6 +1569,9 @@ ${resultSections}</main></body></html>`;
     const caseCount = allFinalCases.length;
     const reviewerAdded = finalCaseSets.reduce((sum, item) => sum + item.added_case_ids.length, 0);
     const unresolved = finalCaseSets.reduce((sum, item) => sum + item.unresolved_questions.length + item.remaining_gaps.length, 0);
+    const allCasesSelected = caseCount > 0 && allFinalCases.every((item) => selectedCaseIds.includes(item.case_id));
+    const someCasesSelected = allFinalCases.some((item) => selectedCaseIds.includes(item.case_id));
+    const caseSelectionLocked = Boolean(batchApproval);
     return <>
       <div className="page-heading">
         <div><span className="kicker">测试设计结果</span><h2>测试用例</h2><p>每个接口独立生成用例，并持续累计到当前项目；展开接口即可查看和选择用例。</p></div>
@@ -1349,13 +1579,16 @@ ${resultSections}</main></body></html>`;
       </div>
       <div className="stats-grid"><div className="metric-card"><span>测试用例</span><strong>{caseCount}</strong><small>项目累计用例</small></div><div className="metric-card"><span>自动补充</span><strong>{reviewerAdded}</strong><small>发现覆盖缺口时补充</small></div><div className="metric-card"><span>副作用用例</span><strong>{allFinalCases.filter((item) => item.side_effect).length}</strong><small>执行前需要确认</small></div><div className="metric-card"><span>待解决问题</span><strong>{unresolved}</strong><small>{unresolved ? "进入执行前需人工确认" : "已完成冻结"}</small></div></div>
       <section className="card case-library-card">
-        <div className="toolbar"><div><strong>批次用例选择</strong><span>{selectedCaseIds.length} / {caseCount} 条已选择</span></div><div className="toolbar-actions"><button className="button button-small button-ghost" onClick={toggleAllCases} disabled={!!batchApproval}>{selectedCaseIds.length === caseCount ? "取消全选" : "全选用例"}</button><button className="button button-small button-secondary" onClick={() => setPage("operations")}>继续选择接口</button><button className="button button-small button-primary" onClick={() => setPage("execution")} disabled={!selectedCaseIds.length}>进入统一执行确认</button></div></div>
+        <div className="toolbar"><div><strong>批次用例选择</strong><span>{selectedCaseIds.length} / {caseCount} 条已选择</span></div><div className="toolbar-actions"><label className="case-select-all"><input type="checkbox" checked={allCasesSelected} ref={(node) => { if (node) node.indeterminate = someCasesSelected && !allCasesSelected; }} onChange={toggleAllCases} disabled={caseSelectionLocked} /><span>全部接口用例</span></label><button className="button button-small button-secondary" onClick={() => setPage("operations")}>继续选择接口</button><button className="button button-small button-primary" onClick={() => setPage("execution")} disabled={!selectedCaseIds.length}>进入统一执行确认</button></div></div>
         <div className="case-accordion-list">{finalCaseSets.map((set) => {
           const operation = operations.find((item) => item.operation_id === set.api_operation_id);
+          const operationLabel = operation ? `${operation.method} ${operation.path}` : set.api_operation_id ?? set.requirement_id;
           const selectedCount = set.cases.filter((item) => selectedCaseIds.includes(item.case_id)).length;
+          const allSetCasesSelected = set.cases.length > 0 && selectedCount === set.cases.length;
+          const someSetCasesSelected = selectedCount > 0 && !allSetCasesSelected;
           return <details className="case-accordion" key={set.final_case_set_id}>
-            <summary><span><strong>{operation ? `${operation.method} ${operation.path}` : set.api_operation_id ?? set.requirement_id}</strong><small>{set.cases.length} 条用例 · 已选择 {selectedCount} 条</small></span><span className="status-badge status-ready">用例已生成</span></summary>
-            <div className="table-wrap"><table><thead><tr><th className="check-col">选择</th><th>用例</th><th>分类</th><th>预期行为</th><th>副作用</th></tr></thead><tbody>{set.cases.map((testCase) => <tr key={testCase.case_id}><td className="check-col"><input type="checkbox" checked={selectedCaseIds.includes(testCase.case_id)} onChange={() => toggleCase(testCase.case_id)} disabled={!!batchApproval} /></td><td><strong>{testCase.title}</strong><small className="table-subtext">{testCase.case_id}</small></td><td>{testCase.category}</td><td className="expected-cell">{testCase.expected_behavior}</td><td>{testCase.side_effect ? <span className="status-badge status-warning">需确认</span> : <span className="status-badge status-neutral">无</span>}</td></tr>)}</tbody></table></div>
+            <summary><input className="case-set-checkbox" type="checkbox" aria-label={`选择 ${operationLabel} 的全部用例`} checked={allSetCasesSelected} ref={(node) => { if (node) node.indeterminate = someSetCasesSelected; }} onClick={(event) => event.stopPropagation()} onChange={() => toggleCaseSet(set)} disabled={caseSelectionLocked} /><span className="case-summary-copy"><strong>{operationLabel}</strong><small>{set.cases.length} 条用例 · 已选择 {selectedCount} 条</small></span><span className="status-badge status-ready">用例已生成</span></summary>
+            <div className="table-wrap"><table><thead><tr><th className="check-col">选择</th><th>用例</th><th>分类</th><th>预期行为</th><th>副作用</th></tr></thead><tbody>{set.cases.map((testCase) => <tr key={testCase.case_id}><td className="check-col"><input type="checkbox" aria-label={`选择用例 ${testCase.title}`} checked={selectedCaseIds.includes(testCase.case_id)} onChange={() => toggleCase(testCase.case_id)} disabled={caseSelectionLocked} /></td><td><strong>{testCase.title}</strong><small className="table-subtext">{testCase.case_id}</small></td><td>{testCase.category}</td><td className="expected-cell">{testCase.expected_behavior}</td><td>{testCase.side_effect ? <span className="status-badge status-warning">需确认</span> : <span className="status-badge status-neutral">无</span>}</td></tr>)}</tbody></table></div>
           </details>;
         })}</div>
       </section>
@@ -1538,7 +1771,7 @@ ${resultSections}</main></body></html>`;
         case "overview": return renderOverview();
         case "documents": return renderDocuments();
         case "operations": return renderOperations();
-        case "requirements": return ["FAILED", "BLOCKED"].includes(queue?.status ?? "") && !startingWorkflow ? renderWorkflowFailure() : renderRequirements();
+        case "requirements": return queue?.status === "SKIPPED" && !startingWorkflow ? renderWorkflowSkipped() : ["FAILED", "BLOCKED"].includes(queue?.status ?? "") && !startingWorkflow ? renderWorkflowFailure() : renderRequirements();
         case "cases": return renderCases();
         case "execution": return renderExecution();
         case "reports": return renderReports();
@@ -1549,5 +1782,41 @@ ${resultSections}</main></body></html>`;
     return <>{content}{parseSuccess && <div className="modal-backdrop" role="presentation" onClick={() => setParseSuccess(null)}><section className="success-modal" role="dialog" aria-modal="true" aria-labelledby="parse-success-title" onClick={(event) => event.stopPropagation()}><button className="modal-close" aria-label="关闭" onClick={() => setParseSuccess(null)}>×</button><div className="success-icon">✓</div><span className="kicker">文档解析</span><h2 id="parse-success-title">需求文档解析成功</h2><p className="success-modal-copy">“{parseSuccess.filename}”已完成解析，后续流程将使用这份规范化需求文档。</p><div className="success-modal-facts"><div><span>字符数</span><strong>{parseSuccess.charCount.toLocaleString()}</strong></div><div><span>行数</span><strong>{parseSuccess.lineCount.toLocaleString()}</strong></div><div><span>文档编号</span><code title={parseSuccess.documentId}>{parseSuccess.documentId}</code></div></div>{parseSuccess.operationCount !== undefined && <p className="success-modal-hint">已从需求原文识别 {parseSuccess.operationCount} 个可测试接口，请在接口目录选择需要分析的接口。</p>}<div className="modal-actions"><button className="button button-primary" onClick={() => setParseSuccess(null)}>继续查看</button>{parseSuccess.operationCount !== undefined && <button className="button button-secondary" onClick={() => { setParseSuccess(null); setPage("operations"); }}>查看接口目录</button>}</div></section></div>}{saveSuccess && <div className="modal-backdrop" role="presentation" onClick={() => setSaveSuccess(null)}><section className="success-modal" role="dialog" aria-modal="true" aria-labelledby="save-success-title" onClick={(event) => event.stopPropagation()}><button className="modal-close" aria-label="关闭" onClick={() => setSaveSuccess(null)}>×</button><div className="success-icon">{saveSuccess.authSuccess ? "✓" : "!"}</div><span className="kicker">项目设置</span><h2 id="save-success-title">{saveSuccess.authSuccess ? "保存成功" : "已保存，但鉴权预检失败"}</h2><p className="success-modal-copy">项目“{saveSuccess.name}”的配置已保存，刷新页面后仍会保留。</p><p className={`success-modal-hint ${saveSuccess.authSuccess ? "" : "save-auth-failed"}`}>{saveSuccess.authMessage}</p><div className="modal-actions"><button className="button button-primary" onClick={() => setSaveSuccess(null)}>知道了</button></div></section></div>}</>;
   }
 
-  return <div className="app-shell"><aside className="sidebar"><div className="brand"><div className="brand-mark">MA</div><div><strong>Multi-Agent</strong><span>接口自动化测试平台</span></div></div><div className="sidebar-section project-section"><span className="sidebar-label">当前项目</span>{projects.length ? <select value={selectedProject?.project_id ?? ""} onChange={(event) => { const project = projects.find((item) => item.project_id === event.target.value); if (project) selectProject(project); }}><option value="" disabled>选择项目</option>{projects.map((project) => <option value={project.project_id} key={project.project_id}>{project.name}</option>)}</select> : <button className="sidebar-create" onClick={() => setShowCreateForm(true)}>+ 创建测试项目</button>}</div><nav className="main-nav" aria-label="主导航">{navItems.map((item) => <button key={item.key} className={`nav-item ${page === item.key ? "active" : ""}`} onClick={() => setPage(item.key)}><span className="nav-index">{item.shortLabel}</span><span>{item.label}</span></button>)}</nav></aside><div className="main-area"><header className="topbar"><div><span className="breadcrumb">测试平台 / {activeNav.label}</span><h1>{activeNav.label}</h1></div></header><main className="content"><div className="workflow-progress"><div className="progress-caption"><div><span className="kicker">测试任务进度</span><strong>需求文档 → 接口选择 → 需求确认 → 用例设计 → 执行 → 报告</strong></div><span>第 {Math.min(currentStep + 1, workflowSteps.length)} / {workflowSteps.length} 阶段</span></div><div className="stepper">{workflowSteps.map((step, index) => <div className={`step ${index < currentStep ? "complete" : ""} ${index === currentStep ? "current" : ""}`} key={step}><span className="step-number">{index < currentStep ? "✓" : index + 1}</span><span>{step}</span></div>)}</div></div><div className={`global-notice ${busy ? "is-busy" : ""}`}><span className="notice-indicator" />{message}</div>{renderPage()}</main></div></div>;
+  return <div className="app-shell">
+    <a className="skip-link" href="#main-content">跳到主要内容</a>
+    <aside className="sidebar">
+      <div className="brand">
+        <div className="brand-mark"><BrandMark /></div>
+        <div><strong>接口测试工作台</strong><span>Multi-Agent workflow</span></div>
+      </div>
+      <div className="sidebar-section project-section">
+        <span className="sidebar-label">当前项目</span>
+        {projects.length
+          ? <select aria-label="当前项目" value={selectedProject?.project_id ?? ""} onChange={(event) => { const project = projects.find((item) => item.project_id === event.target.value); if (project) selectProject(project); }}><option value="" disabled>选择项目</option>{projects.map((project) => <option value={project.project_id} key={project.project_id}>{project.name}</option>)}</select>
+          : <button className="sidebar-create" onClick={() => setShowCreateForm(true)}>+ 创建测试项目</button>}
+      </div>
+      <nav className="main-nav" aria-label="主导航">
+        {navGroups.map((group) => <div className="nav-group" key={group.label}>
+          <span className="nav-group-label">{group.label}</span>
+          {group.items.map((item) => <button key={item.key} className={`nav-item ${page === item.key ? "active" : ""}`} aria-current={page === item.key ? "page" : undefined} onClick={() => setPage(item.key)}><NavIcon name={item.icon} /><span>{item.label}</span></button>)}
+        </div>)}
+      </nav>
+    </aside>
+    <div className="main-area">
+      <header className="topbar">
+        <div><span className="breadcrumb">{selectedProject?.name ?? "接口测试工作台"} / {activeNav.label}</span><h1>{activeNav.label}</h1></div>
+      </header>
+      <main className="content" id="main-content">
+        <section className="workflow-progress" aria-label="测试任务进度">
+          <div className="progress-caption">
+            <div><span className="kicker">测试任务进度</span><strong>{workflowSteps[currentStep]}</strong></div>
+            <span>第 {Math.min(currentStep + 1, workflowSteps.length)} / {workflowSteps.length} 阶段</span>
+          </div>
+          <ol className="stepper">{workflowSteps.map((step, index) => <li className={`step ${index < currentStep ? "complete" : ""} ${index === currentStep ? "current" : ""}`} aria-current={index === currentStep ? "step" : undefined} key={step}><span className="step-number">{index < currentStep ? "✓" : index + 1}</span><span>{step}</span></li>)}</ol>
+        </section>
+        <div className={`global-notice ${busy ? "is-busy" : ""}`} role="status" aria-live="polite" aria-atomic="true"><span className="notice-indicator" />{message}</div>
+        {renderPage()}
+      </main>
+    </div>
+  </div>;
 }

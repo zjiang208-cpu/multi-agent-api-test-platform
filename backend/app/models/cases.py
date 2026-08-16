@@ -16,6 +16,7 @@ AssertionType = Literal[
     "json_type",
     "json_contains",
     "json_exists",
+    "json_array_sorted",
     "header_value",
     "response_schema",
     "response_time_ms",
@@ -64,4 +65,3 @@ class CaseSet(StrictModel):
     cases: list[TestCase] = Field(default_factory=list, max_length=1000)
     prompt_version: str | None = None
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-

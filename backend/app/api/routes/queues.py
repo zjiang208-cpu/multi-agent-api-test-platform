@@ -33,6 +33,10 @@ class RequirementApprovalRequest(BaseModel):
     requirement_fingerprint: str | None = Field(default=None, min_length=64, max_length=64)
 
 
+class QueueSkipRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=2000)
+
+
 class BatchExecutionApprovalRequest(BaseModel):
     target_environment: str = Field(min_length=1, max_length=120)
     base_url: str = Field(min_length=1, max_length=2000)
@@ -90,6 +94,30 @@ async def start_queue(request: Request, project_id: str, run_id: str) -> QueueSt
     return QueueStartResponse(queue=queue, workflow=workflow)
 
 
+@router.post("/{run_id}/skip-current", response_model=ApiProcessingQueue)
+async def skip_current_queue_item(
+    request: Request,
+    project_id: str,
+    run_id: str,
+    payload: QueueSkipRequest | None = None,
+) -> ApiProcessingQueue:
+    queue_service = service(request)
+    queue = await run_in_threadpool(
+        queue_service.skip_current,
+        project_id,
+        run_id,
+        payload.reason if payload else None,
+    )
+    if queue.status == "RUNNING":
+        future = request.app.state.workflow_executor.submit(
+            queue_service.continue_after_skip,
+            project_id,
+            run_id,
+        )
+        future.add_done_callback(_consume_background_result)
+    return queue
+
+
 @router.post("/{run_id}/approve-requirement", response_model=QueueStartResponse)
 async def approve_requirement(
     request: Request,
@@ -105,6 +133,29 @@ async def approve_requirement(
         requirement_id=payload.requirement_id,
         requirement_version=payload.requirement_version,
         requirement_fingerprint=payload.requirement_fingerprint or "",
+    )
+    future = request.app.state.workflow_executor.submit(
+        queue_service.continue_current_after_approval,
+        project_id,
+        run_id,
+    )
+    future.add_done_callback(_consume_background_result)
+    return QueueStartResponse(queue=queue, workflow=workflow)
+
+
+@router.post("/{run_id}/retry-design", response_model=QueueStartResponse)
+async def retry_design(
+    request: Request,
+    project_id: str,
+    run_id: str,
+) -> QueueStartResponse:
+    """Retry Designer/Reviewer while reusing the persisted NLU snapshot."""
+
+    queue_service = service(request)
+    queue, workflow = await run_in_threadpool(
+        queue_service.prepare_cached_design_retry,
+        project_id,
+        run_id,
     )
     future = request.app.state.workflow_executor.submit(
         queue_service.continue_current_after_approval,

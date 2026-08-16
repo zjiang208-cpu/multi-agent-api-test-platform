@@ -78,8 +78,12 @@ export const api = {
     request<ApiProcessingQueue>(`/projects/${projectId}/processing-queues/${runId}`),
   startProcessingQueue: (projectId: string, runId: string) =>
     request<{ queue: ApiProcessingQueue; workflow: WorkflowRunSnapshot }>(`/projects/${projectId}/processing-queues/${runId}/start`, { method: "POST", body: "{}" }, 300000),
+  skipProcessingQueue: (projectId: string, runId: string, reason?: string) =>
+    request<ApiProcessingQueue>(`/projects/${projectId}/processing-queues/${runId}/skip-current`, { method: "POST", body: JSON.stringify({ reason: reason || null }) }, 30000),
   approveCurrentRequirement: (projectId: string, runId: string, payload: { requirement_id: string; requirement_version: number }) =>
     request<{ queue: ApiProcessingQueue; workflow: WorkflowRunSnapshot }>(`/projects/${projectId}/processing-queues/${runId}/approve-requirement`, { method: "POST", body: JSON.stringify(payload) }, 300000),
+  retryCachedDesign: (projectId: string, runId: string) =>
+    request<{ queue: ApiProcessingQueue; workflow: WorkflowRunSnapshot }>(`/projects/${projectId}/processing-queues/${runId}/retry-design`, { method: "POST", body: "{}" }, 30000),
   queueFinalCases: (projectId: string, runId: string) =>
     request<FinalCaseSet[]>(`/projects/${projectId}/processing-queues/${runId}/final-cases`),
   projectFinalCases: (projectId: string) =>

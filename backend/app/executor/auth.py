@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from app.assertions.engine import AssertionEvaluationError, read_json_path
+from app.executor.policy import ExecutionPolicyError, TargetPolicy
 from app.models.cases import TestCase
 from app.models.projects import AuthProviderSettings, ProjectSettings
 from app.providers.llm import SecretReferenceError, resolve_secret_reference
@@ -64,11 +65,12 @@ class AutomaticAuthProvider:
     explicit environment token as a simple fallback.
     """
 
-    def __init__(self) -> None:
-        self._cache: dict[str, _CachedCredentials] = {}
+    def __init__(self, *, allow_remote_targets: bool = False) -> None:
+        self._cache: dict[tuple[str, str], _CachedCredentials] = {}
         self._project_store: Any | None = None
         self._refresh_task: asyncio.Task[None] | None = None
-        self._refresh_retry_at: dict[str, float] = {}
+        self._refresh_retry_at: dict[tuple[str, str], float] = {}
+        self._target_policy = TargetPolicy(allow_remote_targets=allow_remote_targets)
 
     def start(self, project_store: Any) -> None:
         """Start the backend-lifetime refresh loop for configured projects."""
@@ -122,7 +124,7 @@ class AutomaticAuthProvider:
             if provider.kind == "http" and provider.login is None:
                 continue
             base_url = str(project.settings.sut_target.base_url).rstrip("/")
-            key = self._cache_key(base_url)
+            key = self._cache_key(project.project_id, base_url)
             cached = self._cache.get(key)
             due = cached is None or (
                 cached.expires_at is not None and cached.expires_at <= now
@@ -130,7 +132,12 @@ class AutomaticAuthProvider:
             if not due or (not force and self._refresh_retry_at.get(key, 0.0) > now):
                 continue
             try:
-                await self.resolve(project.settings, base_url=base_url, cases=[])
+                await self.resolve(
+                    project.settings,
+                    project_id=project.project_id,
+                    base_url=base_url,
+                    cases=[],
+                )
                 self._refresh_retry_at.pop(key, None)
             except AutomaticAuthenticationError:
                 # The first execution will surface the configuration error to
@@ -144,6 +151,7 @@ class AutomaticAuthProvider:
         self,
         settings: ProjectSettings,
         *,
+        project_id: str,
         base_url: str,
         cases: list[TestCase],
     ) -> AuthCredentials | None:
@@ -152,8 +160,9 @@ class AutomaticAuthProvider:
         if settings.sut_target.auth_ref:
             return None
         configured = settings.auth_provider
-        cache_key = self._cache_key(base_url)
+        cache_key = self._cache_key(project_id, base_url)
         if configured.enabled:
+            self._validate_target(base_url)
             cached = self._cache.get(cache_key)
             if cached and (cached.expires_at is None or cached.expires_at > time.monotonic()):
                 return cached.credentials
@@ -185,14 +194,25 @@ class AutomaticAuthProvider:
             "authenticated cases require auth_provider, auth_ref, or API_TEST_AUTH_TOKEN"
         )
 
-    def invalidate(self, base_url: str) -> None:
+    def invalidate(self, project_id: str, base_url: str) -> None:
         """Forget a cached credential after the target rejects it."""
 
-        self._cache.pop(self._cache_key(base_url), None)
+        key = self._cache_key(project_id, base_url)
+        self._cache.pop(key, None)
+        self._refresh_retry_at.pop(key, None)
 
     @staticmethod
-    def _cache_key(base_url: str) -> str:
-        return base_url.rstrip("/").casefold()
+    def _cache_key(project_id: str, base_url: str) -> tuple[str, str]:
+        return project_id, base_url.rstrip("/").casefold()
+
+    def _validate_target(self, base_url: str) -> None:
+        try:
+            self._target_policy.validate(base_url.rstrip("/"), require_clean_base=True)
+        except ExecutionPolicyError as exc:
+            raise AutomaticAuthenticationError(str(exc)) from exc
+
+    async def _validate_outgoing_request(self, request: httpx.Request) -> None:
+        await self._target_policy.validate_request(request)
 
     @staticmethod
     def _expires_at(provider: AuthProviderSettings) -> float | None:
@@ -260,8 +280,11 @@ class AutomaticAuthProvider:
                 timeout=settings.sut_target.timeout_seconds,
                 follow_redirects=settings.sut_target.allow_redirects,
                 verify=settings.sut_target.verify_tls,
+                event_hooks={"request": [self._validate_outgoing_request]},
             ) as client:
                 response = await client.request(**request)
+        except ExecutionPolicyError as exc:
+            raise AutomaticAuthenticationError(str(exc)) from exc
         except httpx.HTTPError as exc:
             raise AutomaticAuthenticationError(
                 "the configured Auth Provider could not reach its login endpoint"
@@ -390,8 +413,11 @@ class AutomaticAuthProvider:
                 timeout=settings.sut_target.timeout_seconds,
                 follow_redirects=settings.sut_target.allow_redirects,
                 verify=settings.sut_target.verify_tls,
+                event_hooks={"request": [self._validate_outgoing_request]},
             ) as client:
                 return await client.request(**request)
+        except ExecutionPolicyError as exc:
+            raise AutomaticAuthenticationError(str(exc)) from exc
         except httpx.HTTPError as exc:
             raise AutomaticAuthenticationError(
                 "the configured Auth Provider could not reach its login endpoint"

@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from app.models.auth import AuthProtocol
 from app.models.contracts import OperationContract
 from app.models.projects import StrictModel
 
@@ -29,6 +30,7 @@ class RequirementDocument(StrictModel):
     conflicts: list[str] = Field(default_factory=list, max_length=200)
     unresolved_questions: list[str] = Field(default_factory=list, max_length=200)
     evidence_refs: list[RequirementEvidenceRef] = Field(default_factory=list, max_length=1000)
+    auth_protocol: AuthProtocol | None = None
     confidence: RequirementConfidence = "confirmed"
     source_snapshot: str | None = None
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
 import time
-from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
@@ -11,11 +11,8 @@ from app.assertions.engine import evaluate_assertion
 from app.models.cases import TestCase
 from app.models.execution import ExecutionResult
 from app.models.projects import ProjectSettings
+from app.executor.policy import ExecutionPolicyError, TargetPolicy
 from app.providers.llm import resolve_secret_reference
-
-
-class ExecutionPolicyError(ValueError):
-    pass
 
 
 _SENSITIVE_HEADER_NAMES = {
@@ -41,6 +38,7 @@ _SENSITIVE_BODY_KEYS = {
 }
 _REDACTED = "[REDACTED]"
 _AUTH_PLACEHOLDER_MARKERS = ("<redacted>", "<token>", "${token}", "$TOKEN", "YOUR_TOKEN")
+_AUTH_FIXTURE_RE = re.compile(r"\$AUTH_FIXTURE\[(?P<kind>nonexistent|expired):token\]")
 
 
 class HttpExecutor:
@@ -56,6 +54,7 @@ class HttpExecutor:
         auth_name: str = "Authorization",
     ) -> None:
         self.allow_remote_targets = allow_remote_targets
+        self.target_policy = TargetPolicy(allow_remote_targets=allow_remote_targets)
         self.max_response_body_length = max_response_body_length
         self.transport = transport
         self.auth_token = auth_token
@@ -70,7 +69,10 @@ class HttpExecutor:
         try:
             self._check_target(target, require_clean_base=True)
             url = self._render_url(target, case.request.path, case.request.path_params)
-            headers = dict(case.request.headers)
+            headers = {
+                name: self._resolve_auth_fixture(value, settings)
+                for name, value in case.request.headers.items()
+            }
             if not self._expects_unauthorized(case):
                 if self.auth_token and self.auth_location == "cookie":
                     self._inject_cookie(headers, self.auth_name, self.auth_token)
@@ -154,22 +156,12 @@ class HttpExecutor:
         self._check_target(base_url.rstrip("/"), require_clean_base=True)
 
     def _check_target(self, target: str, *, require_clean_base: bool = False) -> None:
-        parsed = urlparse(target)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ExecutionPolicyError("target base URL must be HTTP(S) with a hostname")
-        if parsed.username is not None or parsed.password is not None:
-            raise ExecutionPolicyError("target base URL must not contain credentials")
-        if require_clean_base and (parsed.query or parsed.fragment):
-            raise ExecutionPolicyError("target base URL must not contain a query or fragment")
-        if self.allow_remote_targets:
-            return
-        if parsed.hostname.lower() not in {"localhost", "127.0.0.1", "::1"}:
-            raise ExecutionPolicyError("remote targets are disabled")
+        self.target_policy.validate(target, require_clean_base=require_clean_base)
 
     async def _validate_outgoing_request(self, request: httpx.Request) -> None:
         """Apply the target policy to the initial request and every redirect."""
 
-        self._check_target(str(request.url))
+        await self.target_policy.validate_request(request)
 
     @staticmethod
     def _render_url(base_url: str, path: str, path_params: dict[str, object]) -> str:
@@ -200,6 +192,19 @@ class HttpExecutor:
     @staticmethod
     def _format_auth_value(token: str, prefix: str | None) -> str:
         return f"{prefix} {token}".strip() if prefix else token
+
+    @classmethod
+    def _resolve_auth_fixture(cls, value: str, settings: ProjectSettings) -> str:
+        def replace(match: re.Match[str]) -> str:
+            kind = match.group("kind")
+            if kind == "nonexistent":
+                return f"__api_test_nonexistent_token_{uuid4().hex}__"
+            reference = settings.auth_provider.negative_fixtures.expired_token_ref
+            if not reference:
+                raise ValueError("expired authentication fixture is not configured")
+            return resolve_secret_reference(reference)
+
+        return _AUTH_FIXTURE_RE.sub(replace, value)
 
     @classmethod
     def _inject_cookie(cls, headers: dict[str, str], name: str, value: str) -> None:

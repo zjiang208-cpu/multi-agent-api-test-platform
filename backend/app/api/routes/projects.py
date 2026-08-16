@@ -40,8 +40,8 @@ async def update_project(
     updated = project_service.update(project_id, payload)
     auth_provider = getattr(request.app.state, "auth_provider", None)
     if auth_provider is not None:
-        auth_provider.invalidate(str(previous.settings.sut_target.base_url))
-        auth_provider.invalidate(str(updated.settings.sut_target.base_url))
+        auth_provider.invalidate(project_id, str(previous.settings.sut_target.base_url))
+        auth_provider.invalidate(project_id, str(updated.settings.sut_target.base_url))
     return updated
 
 
@@ -71,8 +71,10 @@ async def refresh_project_auth(request: Request, project_id: str) -> AuthRefresh
             message="项目使用外部鉴权引用，平台不主动获取 Token",
         )
     try:
+        provider.invalidate(project_id, str(settings.sut_target.base_url))
         credentials = await provider.resolve(
             settings,
+            project_id=project_id,
             base_url=str(settings.sut_target.base_url),
             cases=[],
         )
@@ -98,5 +100,5 @@ async def delete_project(request: Request, project_id: str) -> Response:
     project_service.delete(project_id)
     auth_provider = getattr(request.app.state, "auth_provider", None)
     if auth_provider is not None:
-        auth_provider.invalidate(str(project.settings.sut_target.base_url))
+        auth_provider.invalidate(project_id, str(project.settings.sut_target.base_url))
     return Response(status_code=status.HTTP_204_NO_CONTENT)

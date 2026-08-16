@@ -59,13 +59,20 @@ class StructuredOutputParser:
         try:
             value: Any = json.loads(text)
         except json.JSONDecodeError as exc:
-            start = min(index for index in (text.find("{"), text.find("[")) if index >= 0) if ("{" in text or "[" in text) else -1
-            if start < 0:
+            # Models sometimes wrap an otherwise valid object in a sentence,
+            # Markdown, or trailing commentary.  Decode the first complete
+            # JSON value rather than requiring the entire response to be JSON.
+            decoder = json.JSONDecoder()
+            starts = [index for index, char in enumerate(text) if char in "{["]
+            value = None
+            for start in starts:
+                try:
+                    value, _ = decoder.raw_decode(text[start:])
+                    break
+                except json.JSONDecodeError:
+                    continue
+            if value is None:
                 raise ProviderError(f"provider did not return JSON: {exc}") from exc
-            try:
-                value = json.loads(text[start:])
-            except json.JSONDecodeError as nested:
-                raise ProviderError(f"provider returned invalid JSON: {nested}") from nested
         try:
             return response_model.model_validate(value)
         except ValidationError as exc:

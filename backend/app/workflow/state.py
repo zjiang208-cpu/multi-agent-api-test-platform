@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+from app.models.auth import AuthProtocol
 from app.models.contracts import OperationContract
 from app.models.evidence import EvidenceBundle
 from app.models.requirements import RequirementDocument
@@ -25,6 +26,7 @@ class WorkflowState(TypedDict, total=False):
     input_document: str | None
     operation: OperationContract
     evidence: EvidenceBundle
+    auth_protocol: AuthProtocol
     requirement: RequirementDocument
     test_points: TestPointCollection
     draft_cases: CaseSet

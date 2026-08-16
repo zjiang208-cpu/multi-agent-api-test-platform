@@ -21,7 +21,7 @@ class EvidenceRegistry:
                     and context.settings.database.enabled
                 )
                 should_retrieve = (
-                    provider.provider_type in {"openapi", "operation_yaml"}
+                    provider.provider_type in {"openapi", "operation_yaml", "auth_fixture"}
                     or explicitly_enabled_database
                     or query.include_optional
                 )

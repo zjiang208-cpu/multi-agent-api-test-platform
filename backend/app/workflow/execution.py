@@ -142,7 +142,9 @@ class BatchExecutionService:
         self.allow_remote_targets = allow_remote_targets
         self.max_response_body_length = max_response_body_length
         self.executor = executor
-        self.auth_provider = auth_provider or AutomaticAuthProvider()
+        self.auth_provider = auth_provider or AutomaticAuthProvider(
+            allow_remote_targets=allow_remote_targets
+        )
 
     async def execute_manual(self, project_id: str, approval_id: str) -> tuple[RunResult, ReportSnapshot]:
         approval, previous_result = self._claim_manual_approval(project_id, approval_id)
@@ -218,6 +220,7 @@ class BatchExecutionService:
             try:
                 credentials = await self.auth_provider.resolve(
                     settings,
+                    project_id=project_id,
                     base_url=str(approval.base_url),
                     cases=selected_cases,
                 )
@@ -242,10 +245,11 @@ class BatchExecutionService:
                 and not _expects_unauthorized(case)
             ):
                 auth_refresh_attempted = True
-                self.auth_provider.invalidate(str(approval.base_url))
+                self.auth_provider.invalidate(project_id, str(approval.base_url))
                 try:
                     refreshed = await self.auth_provider.resolve(
                         settings,
+                        project_id=project_id,
                         base_url=str(approval.base_url),
                         cases=selected_cases,
                     )
@@ -391,16 +395,20 @@ class BatchHumanGateService:
     ) -> BatchExecutionApproval:
         self.project_service.get(project_id)
         queue = QueueStore(self.data_dir, project_id).get(queue_run_id)
-        if queue.status != "READY_FOR_EXECUTION":
+        if queue.status not in {"READY_FOR_EXECUTION", "READY_WITH_SKIPS"}:
             raise HumanGateRequiredError("all selected APIs must complete before batch execution approval")
         final_sets: list[FinalCaseSet] = []
         for item in queue.items:
+            if item.status == "SKIPPED":
+                continue
             if item.status != "COMPLETED" or not item.final_case_set_id:
                 raise HumanGateRequiredError("every queue item must have frozen Final Cases")
             try:
                 final_sets.append(WorkflowStore(self.data_dir, project_id).get_final_cases(item.final_case_set_id))
             except ArtifactError as exc:
                 raise ResourceNotFoundError(f"Final Cases not found: {item.final_case_set_id}") from exc
+        if not final_sets:
+            raise HumanGateRequiredError("the queue has no completed API test cases")
         return self._approve_final_sets(
             project_id,
             queue_run_id=queue_run_id,
@@ -563,6 +571,7 @@ class BatchQueueExecutionService(BatchExecutionService):
                 try:
                     credentials = await self.auth_provider.resolve(
                         settings,
+                        project_id=project_id,
                         base_url=str(approval.base_url),
                         cases=[case for case, _ in selected_cases],
                     )
@@ -587,10 +596,11 @@ class BatchQueueExecutionService(BatchExecutionService):
                     and not _expects_unauthorized(case)
                 ):
                     auth_refresh_attempted = True
-                    self.auth_provider.invalidate(str(approval.base_url))
+                    self.auth_provider.invalidate(project_id, str(approval.base_url))
                     try:
                         refreshed = await self.auth_provider.resolve(
                             settings,
+                            project_id=project_id,
                             base_url=str(approval.base_url),
                             cases=[candidate for candidate, _ in selected_cases],
                         )

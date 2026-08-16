@@ -91,6 +91,19 @@ class AuthInjectSpec(StrictModel):
     prefix: str | None = Field(default="Bearer", max_length=80)
 
 
+class AuthNegativeFixtureSettings(StrictModel):
+    """Optional deterministic fixtures for authentication negative cases."""
+
+    expired_token_ref: str | None = Field(default=None, max_length=200)
+
+    @field_validator("expired_token_ref")
+    @classmethod
+    def validate_expired_token_ref(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith("env:"):
+            raise ValueError("expired Token fixtures must use env:NAME references")
+        return value
+
+
 def _default_sms_code_request() -> AuthRequestSpec:
     return AuthRequestSpec(
         method="POST",
@@ -144,6 +157,9 @@ class AuthProviderSettings(StrictModel):
     login: AuthRequestSpec | None = None
     extract: AuthExtractSpec = Field(default_factory=AuthExtractSpec)
     inject: AuthInjectSpec = Field(default_factory=AuthInjectSpec)
+    negative_fixtures: AuthNegativeFixtureSettings = Field(
+        default_factory=AuthNegativeFixtureSettings
+    )
     sms: SmsAuthSettings = Field(default_factory=SmsAuthSettings)
 
     @field_validator("kind", mode="before")

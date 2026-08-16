@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.core.errors import ResourceNotFoundError
 from app.evidence.providers.database import DatabaseSchemaEvidenceProvider
+from app.evidence.providers.auth_fixture import AuthFixtureEvidenceProvider
 from app.evidence.providers.openapi import OpenApiEvidenceProvider
 from app.evidence.providers.operation_yaml import OperationYamlEvidenceProvider
 from app.evidence.providers.source import JavaSpringSourceEvidenceProvider
@@ -45,6 +46,7 @@ class RequirementBuilder:
             [
                 OpenApiEvidenceProvider(),
                 OperationYamlEvidenceProvider(),
+                AuthFixtureEvidenceProvider(),
                 JavaSpringSourceEvidenceProvider(),
                 DatabaseSchemaEvidenceProvider(),
             ]

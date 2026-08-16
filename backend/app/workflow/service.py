@@ -213,7 +213,27 @@ class WorkflowService:
         try:
             result = graph.invoke_after_requirement_approval(state)
         except Exception as exc:
-            raise WorkflowRunError(self._safe_failure_message(exc)) from exc
+            message = self._safe_failure_message(exc)
+            # Persist downstream telemetry even when Designer/Reviewer fails.
+            # This makes structured-output retries observable and allows the
+            # queue UI/reporting layer to distinguish model retries from a
+            # failure before the graph started.
+            failed_snapshot = snapshot.model_copy(
+                update={
+                    "status": "FAILED",
+                    "errors": [message],
+                    "events": [
+                        *snapshot.events,
+                        {"node": "designer_reviewer", "status": "FAILED", "message": message},
+                    ],
+                    "metadata": {
+                        **snapshot.metadata,
+                        **self._telemetry_metadata(graph),
+                    },
+                }
+            )
+            store.save_run(failed_snapshot)
+            raise WorkflowRunError(message) from exc
         completed = WorkflowRunSnapshot(
             workflow_id=snapshot.workflow_id,
             project_id=project_id,

@@ -33,6 +33,9 @@ def read_json_path(value: Any, path: str) -> Any:
                 raise KeyError(path)
             current = current[key]
         else:
+            if key == "length" and isinstance(current, (list, str)):
+                current = len(current)
+                continue
             if not isinstance(current, Mapping) or key not in current:
                 raise KeyError(path)
             current = current[key]
@@ -73,11 +76,14 @@ def evaluate_assertion(assertion: Assertion, *, status_code: int, headers: Mappi
         elif assertion.type == "json_exists":
             try:
                 read_json_path(body, assertion.path or "")
-                passed = True
                 actual = True
             except (KeyError, IndexError):
-                passed = False
                 actual = False
+            expected = True if assertion.expected is None else assertion.expected
+            passed = actual == expected
+        elif assertion.type == "json_array_sorted":
+            actual = read_json_path(body, assertion.path or "")
+            passed = _matches_array_order(actual, assertion.expected)
         elif assertion.type in {"json_value", "json_type", "json_contains"}:
             actual = read_json_path(body, assertion.path or "")
             if assertion.type == "json_value":
@@ -176,3 +182,30 @@ def _matches_schema(value: Any, schema: Any) -> bool:
     if schema_type == "null":
         return value is None
     return schema_type is None and (not schema or set(schema) == {"enum"})
+
+
+def _matches_array_order(value: Any, spec: Any) -> bool:
+    if not isinstance(value, list) or not isinstance(spec, Mapping):
+        return False
+    fields = spec.get("fields")
+    if not isinstance(fields, list) or not fields:
+        return False
+    for field in fields:
+        if not isinstance(field, Mapping):
+            return False
+        path = field.get("path")
+        order = str(field.get("order", "")).lower()
+        if not isinstance(path, str) or not path.startswith("$") or order not in {"asc", "desc"}:
+            return False
+    for previous, current in zip(value, value[1:]):
+        for field in fields:
+            path = field["path"]
+            order = str(field["order"]).lower()
+            previous_value = read_json_path(previous, path)
+            current_value = read_json_path(current, path)
+            if previous_value == current_value:
+                continue
+            if order == "asc":
+                return previous_value < current_value
+            return previous_value > current_value
+    return True

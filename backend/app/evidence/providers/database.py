@@ -14,7 +14,9 @@ from app.providers.llm import SecretReferenceError, resolve_secret_reference
 
 
 _FIXTURE_TOKEN = re.compile(
-    r"^\$DB_FIXTURE\[(existing|absent):([A-Za-z0-9_]+):([A-Za-z0-9_]+)\]$"
+    r"^\$DB_FIXTURE\[(existing|absent|referenced|unreferenced|duplicate):"
+    r"([A-Za-z0-9_]+):([A-Za-z0-9_]+)"
+    r"(?::([A-Za-z0-9_]+):([A-Za-z0-9_]+))?\]$"
 )
 _EXACT_FIXTURE_TOKEN = re.compile(
     r"^\$DB_FIXTURE\[(present|missing):([A-Za-z0-9_]+):([A-Za-z0-9_]+):(-?\d+)\]$"
@@ -109,9 +111,79 @@ class DatabaseSchemaEvidenceProvider:
                             metadata={"table": table_name, "read_only": "true"},
                         )
                     )
+                relation_tokens = self._relation_fixture_tokens(
+                    engine,
+                    profile.schema_name,
+                    table_name,
+                    existing_tables,
+                )
+                if relation_tokens:
+                    facts.append(
+                        EvidenceFact(
+                            source_type="database_fixture",
+                            reference=f"database-fixture:{table_name}:relations",
+                            operation_id=context.operation.operation_id,
+                            fact=(
+                                f"Allowed table {table_name} supports deterministic relation/duplicate "
+                                "fixture resolution. Tokens: " + "; ".join(relation_tokens) + "."
+                            ),
+                            metadata={
+                                "table": table_name,
+                                "read_only": "true",
+                                "relation_fixture": "true",
+                            },
+                        )
+                    )
             return facts
         finally:
             engine.dispose()
+
+    @staticmethod
+    def _relation_fixture_tokens(
+        engine,
+        schema: str | None,
+        table_name: str,
+        existing_tables: set[str],
+    ) -> list[str]:
+        """Advertise only relation fixtures that exist in the read-only database."""
+
+        if table_name != "tb_shop_type" or "tb_shop" not in existing_tables:
+            return []
+        metadata = MetaData()
+        parent = Table(table_name, metadata, schema=schema, autoload_with=engine)
+        child = Table("tb_shop", metadata, schema=schema, autoload_with=engine)
+        if "id" not in parent.columns or "name" not in parent.columns or "type_id" not in child.columns:
+            return []
+        tokens: list[str] = []
+        with engine.connect() as connection:
+            duplicate = connection.execute(
+                select(parent.c.name)
+                .where(parent.c.name.is_not(None))
+                .group_by(parent.c.name)
+                .having(func.count() > 1)
+                .limit(1)
+            ).scalar_one_or_none()
+            if duplicate is not None:
+                tokens.append("duplicate name=$DB_FIXTURE[duplicate:tb_shop_type:name]")
+            references = select(child.c.type_id).where(child.c.type_id.is_not(None))
+            referenced_count = connection.execute(
+                select(func.count()).select_from(parent).where(parent.c.id.in_(references))
+            ).scalar_one()
+            if referenced_count:
+                tokens.append(
+                    "referenced id=$DB_FIXTURE[referenced:tb_shop_type:id:tb_shop:type_id]"
+                )
+            unreferenced_count = connection.execute(
+                select(func.count()).select_from(parent).where(
+                    parent.c.id.is_not(None),
+                    ~parent.c.id.in_(references),
+                )
+            ).scalar_one()
+            if unreferenced_count:
+                tokens.append(
+                    "unreferenced id=$DB_FIXTURE[unreferenced:tb_shop_type:id:tb_shop:type_id]"
+                )
+        return tokens
 
     @staticmethod
     def _is_identifier_column(column_name: str, primary_keys: set[str]) -> bool:
@@ -198,7 +270,12 @@ class DatabaseFixtureResolver:
     @staticmethod
     def _resolve_token(match, settings, engine) -> Any:
         groups = match.groups()
-        fixture_kind, table_name, column_name = groups[:3]
+        if len(groups) == 4:
+            fixture_kind, table_name, column_name, exact_value = groups
+            related_table = related_column = None
+        else:
+            fixture_kind, table_name, column_name, related_table, related_column = groups
+            exact_value = None
         profile = settings.database
         if table_name not in profile.allowed_tables:
             raise ValueError(f"database fixture table is not allowlisted: {table_name}")
@@ -215,7 +292,7 @@ class DatabaseFixtureResolver:
         column = table.columns[column_name]
         with engine.connect() as connection:
             if fixture_kind in {"present", "missing"}:
-                exact_value = int(groups[3])
+                exact_value = int(exact_value)
                 try:
                     python_type = column.type.python_type
                 except (AttributeError, NotImplementedError):
@@ -249,6 +326,57 @@ class DatabaseFixtureResolver:
                 ).scalar_one_or_none()
                 if value is None:
                     raise ValueError(f"no existing database fixture: {table_name}.{column_name}")
+                return value
+            if fixture_kind == "duplicate":
+                value = connection.execute(
+                    select(column)
+                    .where(column.is_not(None))
+                    .group_by(column)
+                    .having(func.count() > 1)
+                    .order_by(column)
+                    .limit(1)
+                ).scalar_one_or_none()
+                if value is None:
+                    raise ValueError(
+                        f"no duplicate database fixture: {table_name}.{column_name}"
+                    )
+                return value
+            if fixture_kind in {"referenced", "unreferenced"}:
+                if not related_table or not related_column:
+                    raise ValueError(
+                        f"{fixture_kind} database fixture requires a related table and column"
+                    )
+                if related_table not in profile.allowed_tables:
+                    raise ValueError(
+                        f"database fixture related table is not allowlisted: {related_table}"
+                    )
+                related = Table(
+                    related_table,
+                    MetaData(),
+                    schema=profile.schema_name,
+                    autoload_with=engine,
+                )
+                if related_column not in related.columns:
+                    raise ValueError(
+                        f"database fixture related column does not exist: "
+                        f"{related_table}.{related_column}"
+                    )
+                related_column_obj = related.columns[related_column]
+                matching_values = select(related_column_obj).where(
+                    related_column_obj.is_not(None)
+                )
+                if fixture_kind == "referenced":
+                    predicate = column.in_(matching_values)
+                else:
+                    predicate = ~column.in_(matching_values)
+                value = connection.execute(
+                    select(column).where(column.is_not(None), predicate).order_by(column).limit(1)
+                ).scalar_one_or_none()
+                if value is None:
+                    raise ValueError(
+                        f"no {fixture_kind} database fixture: "
+                        f"{table_name}.{column_name} via {related_table}.{related_column}"
+                    )
                 return value
             try:
                 python_type = column.type.python_type

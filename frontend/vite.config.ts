@@ -9,6 +9,9 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     server: {
+      // Listen on IPv4 as well as localhost IPv6 so the documented
+      // http://127.0.0.1:5173 address and the API proxy are reachable.
+      host: "0.0.0.0",
       port: frontendPort,
       strictPort: true,
       proxy: {

@@ -13,19 +13,22 @@ from langgraph.graph import END, START, StateGraph
 from app.cases.validator import validate_case
 from app.core.errors import ResourceNotFoundError
 from app.evidence.providers.database import DatabaseFixtureResolver, DatabaseSchemaEvidenceProvider
+from app.evidence.providers.auth_fixture import AuthFixtureEvidenceProvider
 from app.evidence.providers.openapi import OpenApiEvidenceProvider
 from app.evidence.providers.operation_yaml import OperationYamlEvidenceProvider
 from app.evidence.providers.source import JavaSpringSourceEvidenceProvider
 from app.evidence.protocol import EvidenceContext, EvidenceQuery
 from app.evidence.registry import EvidenceRegistry
 from app.models.cases import CaseSet, TestCase
+from app.models.auth import AuthProtocol
 from app.models.evidence import EvidenceBundle, EvidenceFact
-from app.models.requirements import RequirementDocument
+from app.models.requirements import RequirementDocument, RequirementEvidenceRef
 from app.models.testpoints import TestPoint, TestPointCollection
 from app.projects.service import ProjectService
 from app.providers.llm import SecretReferenceError
 from app.requirements.operation_store import OperationStore
 from app.workflow.agents import LlmTelemetry, StructuredLangChainAgent
+from app.workflow.auth_protocol import extract_auth_protocol, normalize_auth_text
 from app.workflow.fingerprint import requirement_fingerprint
 from app.workflow.models import (
     DesignerAgentOutput,
@@ -103,7 +106,6 @@ class ApiTestWorkflow:
         builder.add_node("reviewer_agent", self._reviewer_agent_node)
         builder.add_node("supplement_designer_agent", self._supplement_designer_agent_node)
         builder.add_node("local_final_validator", self._local_final_validator_node)
-        builder.add_node("final_reviewer_agent", self._final_reviewer_agent_node)
         builder.add_node("final_case_assembler", self._final_case_assembler)
         builder.add_edge(START, "designer_agent")
         builder.add_edge("designer_agent", "reviewer_agent")
@@ -120,11 +122,9 @@ class ApiTestWorkflow:
             self._route_after_supplement,
             {
                 "local_finish": "local_final_validator",
-                "model_review": "final_reviewer_agent",
             },
         )
         builder.add_edge("local_final_validator", "final_case_assembler")
-        builder.add_edge("final_reviewer_agent", "final_case_assembler")
         builder.add_edge("final_case_assembler", END)
         return builder.compile(checkpointer=self.checkpointer)
 
@@ -162,6 +162,7 @@ class ApiTestWorkflow:
             [
                 OpenApiEvidenceProvider(),
                 OperationYamlEvidenceProvider(),
+                AuthFixtureEvidenceProvider(),
                 JavaSpringSourceEvidenceProvider(),
                 DatabaseSchemaEvidenceProvider(),
             ]
@@ -170,6 +171,7 @@ class ApiTestWorkflow:
             EvidenceQuery(include_optional=state.get("include_optional_evidence", False)),
         )
         input_document = state.get("input_document")
+        document_excerpt: str | None = None
         if input_document:
             source_document_id = (
                 state.get("input_document_id")
@@ -177,6 +179,11 @@ class ApiTestWorkflow:
                 or "inline-requirement-document"
             )
             excerpt = self._operation_requirement_excerpt(operation, input_document)
+            document_excerpt = self._operation_auth_context(
+                operation,
+                input_document,
+                excerpt,
+            )
             digest = sha256(
                 f"{source_document_id}|{operation.operation_id}|{input_document}".encode("utf-8")
             ).hexdigest()[:32]
@@ -201,9 +208,15 @@ class ApiTestWorkflow:
                     },
                 }
             )
+        auth_protocol = extract_auth_protocol(
+            operation=operation,
+            document_excerpt=document_excerpt,
+            evidence=evidence,
+        )
         return self._update(
             state,
             evidence=evidence,
+            auth_protocol=auth_protocol,
             status="EVIDENCE_RETRIEVED",
             node="evidence_retriever",
             message=f"Retrieved {len(evidence.facts)} evidence facts.",
@@ -270,6 +283,54 @@ class ApiTestWorkflow:
                 return source.source_text[:9_000]
         return document[:9_000]
 
+    @staticmethod
+    def _operation_auth_context(
+        operation,
+        document: str,
+        operation_excerpt: str,
+    ) -> str:
+        """Add document-level auth protocol rules to the selected operation excerpt.
+
+        API discovery intentionally narrows the business excerpt to one operation.
+        Authentication conventions are often declared once near the document top,
+        so retain only headings that explicitly describe shared protocol rules and
+        never append neighbouring operation sections.
+        """
+
+        lines = document.splitlines()
+        global_sections: list[str] = []
+        heading_pattern = re.compile(
+            r"(?i)(?:当前|通用|公共|全局).*(?:协议|认证|鉴权|约定|规则)"
+            r"|(?:协议|认证|鉴权).*(?:约定|规则|策略)"
+            r"|auth(?:entication)?\s+(?:protocol|policy|convention)"
+        )
+        operation_start = min(
+            (
+                source.start_line
+                for source in operation.source_refs
+                if source.start_line and source.start_line >= 1
+            ),
+            default=len(lines) + 1,
+        )
+        for index, line in enumerate(lines):
+            if (
+                index + 1 >= operation_start
+                or not line.lstrip().startswith("#")
+                or not heading_pattern.search(line)
+            ):
+                continue
+            end = len(lines)
+            for candidate in range(index + 1, len(lines)):
+                if lines[candidate].lstrip().startswith("#"):
+                    end = candidate
+                    break
+            section = "\n".join(lines[index:end]).strip()
+            if section:
+                global_sections.append(section[:4_000])
+
+        chunks = [*global_sections, operation_excerpt]
+        return "\n\n".join(dict.fromkeys(chunk for chunk in chunks if chunk))[:9_000]
+
     def _nlu_agent_node(self, state: WorkflowState) -> dict[str, Any]:
         output = self.nlu_agent.invoke(
             {
@@ -277,11 +338,18 @@ class ApiTestWorkflow:
                 "current_api": state["operation"],
                 "source_document": state.get("input_document"),
                 "evidence": state["evidence"],
+                "auth_protocol": state.get("auth_protocol", AuthProtocol()),
             }
         )
         requirement = self._normalize_requirement(output.requirement, state)
+        requirement, points = self._normalize_auth_protocol_output(
+            requirement,
+            output.test_points,
+            state.get("auth_protocol", AuthProtocol()),
+            state.get("evidence"),
+        )
         self._require_requirement(requirement, state)
-        points = self._normalize_test_points(output.test_points, requirement, state)
+        points = self._normalize_test_points(points, requirement, state)
         points = self._complete_explicit_numeric_boundary_points(points, requirement)
         requirement, points = self._resolve_exact_numeric_boundary_fixtures(
             requirement,
@@ -311,7 +379,9 @@ class ApiTestWorkflow:
             }
         )
         draft = self._strip_unrequested_schema_assertions(
-            self._normalize_case_evidence(output.draft_cases, state),
+            self._canonicalize_redacted_auth_cases(
+                self._normalize_case_evidence(output.draft_cases, state), state
+            ),
             state["requirement"],
         ).model_copy(
             update={
@@ -378,7 +448,9 @@ class ApiTestWorkflow:
             }
         )
         supplemental_set = self._strip_unrequested_schema_assertions(
-            self._normalize_case_evidence(output.draft_cases, state),
+            self._canonicalize_redacted_auth_cases(
+                self._normalize_case_evidence(output.draft_cases, state), state
+            ),
             state["requirement"],
         )
         supplemental_cases = [
@@ -447,22 +519,47 @@ class ApiTestWorkflow:
         )
 
     def _route_after_supplement(self, state: WorkflowState) -> str:
-        return "local_finish" if self._supplement_is_locally_complete(state) else "model_review"
+        # The repair budget is one supplement pass. Any remaining uncertainty is
+        # preserved as deterministic gaps instead of starting a second Reviewer
+        # model call.
+        return "local_finish"
 
     def _local_final_validator_node(self, state: WorkflowState) -> dict[str, Any]:
         review = state["reviewer_output"]
         supplemental_cases = state.get("supplemental_cases", [])
+        all_cases = [*state["draft_cases"].cases, *supplemental_cases]
         covered_points = {
-            point_id for case in supplemental_cases for point_id in case.test_point_ids
+            point_id for case in all_cases for point_id in case.test_point_ids
         }
+        unresolved_targets: set[str] = set()
+        deterministic_gaps: list[str] = []
+        for spec in review.suggested_case_specs:
+            spec_gaps = self._supplement_spec_gaps(spec, all_cases)
+            if not spec_gaps:
+                continue
+            unresolved_targets.update(spec.target_test_point_ids)
+            deterministic_gaps.append(
+                f"Bounded repair could not close {spec.spec_id}: "
+                + "; ".join(spec_gaps)
+            )
+        remaining_gaps = list(review.remaining_gaps)
+        remaining_gaps.extend(deterministic_gaps)
         locally_final = review.model_copy(
             update={
-                "missing_test_point_ids": [
-                    point_id
-                    for point_id in review.missing_test_point_ids
-                    if point_id not in covered_points
-                ],
+                "missing_test_point_ids": list(
+                    dict.fromkeys(
+                        [
+                            *[
+                                point_id
+                                for point_id in review.missing_test_point_ids
+                                if point_id not in covered_points
+                            ],
+                            *sorted(unresolved_targets),
+                        ]
+                    )
+                ),
                 "suggested_case_specs": [],
+                "remaining_gaps": list(dict.fromkeys(remaining_gaps)),
             }
         )
         return self._update(
@@ -471,45 +568,8 @@ class ApiTestWorkflow:
             status="REVIEWING",
             node="local_final_validator",
             message=(
-                "Deterministic validation accepted the bounded supplemental cases; "
-                "one final Reviewer model call was skipped."
-            ),
-        )
-
-    def _final_reviewer_agent_node(self, state: WorkflowState) -> dict[str, Any]:
-        supplemental_cases = state.get("supplemental_cases", [])
-        combined = state["draft_cases"].model_copy(
-            update={"cases": [*state["draft_cases"].cases, *supplemental_cases]}
-        )
-        output = self.reviewer_agent.invoke(
-            {
-                "review_stage": "final",
-                "operation": state["operation"],
-                "requirement": state["requirement"],
-                "test_points": state["test_points"],
-                "draft_cases": combined,
-                "evidence": self._downstream_evidence(state),
-                "repair_limit_reached": True,
-            }
-        )
-        self._validate_review_output(output, state)
-        remaining_gaps = list(output.remaining_gaps)
-        remaining_gaps.extend(
-            f"Repair limit reached: {spec.reason}" for spec in output.suggested_case_specs
-        )
-        output = output.model_copy(
-            update={
-                "remaining_gaps": list(dict.fromkeys(remaining_gaps)),
-            }
-        )
-        return self._update(
-            state,
-            reviewer_output=output,
-            status="REVIEWING",
-            node="final_reviewer_agent",
-            message=(
-                "Reviewer completed final review after the single bounded supplement pass."
-                f"{self._metric_suffix(self.reviewer_agent)}"
+                "Deterministic validation completed the single bounded supplement pass; "
+                "remaining gaps were retained without another Reviewer model call."
             ),
         )
 
@@ -535,50 +595,53 @@ class ApiTestWorkflow:
         if not referenced_ids:
             return evidence
         filtered = [
-            fact for fact in evidence.facts if fact.evidence_id in referenced_ids
+            fact
+            for fact in evidence.facts
+            if fact.evidence_id in referenced_ids or fact.source_type == "auth_provider"
         ]
         return evidence.model_copy(update={"facts": filtered}) if filtered else evidence
 
     @classmethod
-    def _supplement_is_locally_complete(cls, state: WorkflowState) -> bool:
-        review = state["reviewer_output"]
-        cases = state.get("supplemental_cases", [])
-        if not review.suggested_case_specs or not cases or state.get("supplement_notes"):
-            return False
-        for spec in review.suggested_case_specs:
-            target_points = set(spec.target_test_point_ids)
-            candidate_cases = [
-                case for case in cases if target_points.intersection(case.test_point_ids)
+    def _supplement_spec_gaps(cls, spec, cases: list[TestCase]) -> list[str]:
+        """Return deterministic reasons a bounded supplement did not close a spec."""
+
+        target_points = set(spec.target_test_point_ids)
+        candidate_cases = [
+            case for case in cases if target_points.intersection(case.test_point_ids)
+        ]
+        covered_points = {
+            point_id for case in candidate_cases for point_id in case.test_point_ids
+        }
+        gaps: list[str] = []
+        uncovered = sorted(target_points - covered_points)
+        if uncovered:
+            gaps.append(f"target Test Points remain uncovered: {uncovered}")
+        case_evidence = {
+            evidence_id
+            for case in candidate_cases
+            for evidence_id in [
+                *case.evidence_refs,
+                *(ref for assertion in case.assertions for ref in assertion.evidence_refs),
             ]
-            covered_points = {
-                point_id for case in candidate_cases for point_id in case.test_point_ids
-            }
-            if not target_points.issubset(covered_points):
-                return False
-            case_evidence = {
-                evidence_id
-                for case in candidate_cases
-                for evidence_id in [
-                    *case.evidence_refs,
-                    *(ref for assertion in case.assertions for ref in assertion.evidence_refs),
-                ]
-            }
-            if not set(spec.evidence_refs).issubset(case_evidence):
-                return False
-            if not all(
-                cls._required_assertion_is_observed(required, candidate_cases)
-                for required in spec.required_assertions
-            ):
-                return False
-        return True
+        }
+        missing_evidence = sorted(set(spec.evidence_refs) - case_evidence)
+        if missing_evidence:
+            gaps.append(f"required evidence is not referenced: {missing_evidence}")
+        missing_assertions = [
+            required
+            for required in spec.required_assertions
+            if not cls._required_assertion_is_observed(required, candidate_cases)
+        ]
+        if missing_assertions:
+            gaps.append(f"required assertions are not observable: {missing_assertions}")
+        return gaps
 
     @staticmethod
     def _required_assertion_is_observed(required: str, cases: list[TestCase]) -> bool:
         """Conservatively map a Reviewer assertion request to executable assertions.
 
-        Unknown natural-language requirements deliberately return False so the final
-        Reviewer model call remains the fallback for anything local validation cannot
-        prove.
+        Unknown natural-language requirements deliberately return False so the
+        deterministic validator preserves the gap instead of guessing coverage.
         """
 
         text = required.casefold()
@@ -609,6 +672,7 @@ class ApiTestWorkflow:
             "response_schema": ("schema", "结构", "字段契约"),
             "header_value": ("header", "响应头"),
             "json_exists": ("exists", "存在"),
+            "json_array_sorted": ("json_array_sorted", "array sorted", "排序", "有序"),
             "json_type": ("json type", "类型"),
             "json_contains": ("contains", "包含"),
         }
@@ -689,6 +753,59 @@ class ApiTestWorkflow:
         ).casefold()
         return any(marker.casefold() in haystack for marker in _AUTH_PLACEHOLDER_MARKERS)
 
+    @classmethod
+    def _canonicalize_redacted_auth_cases(
+        cls,
+        case_set: CaseSet,
+        state: WorkflowState,
+    ) -> CaseSet:
+        """Replace model-redacted negative credentials with safe local fixtures.
+
+        The LLM input is intentionally redacted for safety.  A negative 401/403
+        case still needs a deterministic invalid credential, however, so restore
+        only the safe placeholder and keep the real token local to the executor.
+        """
+
+        fixtures = cls._auth_fixture_evidence(state.get("evidence"))
+        fixture = fixtures.get("nonexistent") or fixtures.get("expired")
+        if fixture is None:
+            return case_set
+        fixture_id, placeholder = fixture
+        protocol = state.get("auth_protocol", AuthProtocol())
+        replacement = placeholder
+        if protocol.status == "explicit" and protocol.prefix:
+            replacement = f"{protocol.prefix} {placeholder}"
+        changed_cases: list[TestCase] = []
+        for case in case_set.cases:
+            is_unauthorized = any(
+                assertion.type == "status_code"
+                and str(assertion.expected) in {"401", "403"}
+                for assertion in case.assertions
+            )
+            if not is_unauthorized:
+                changed_cases.append(case)
+                continue
+            headers = dict(case.request.headers)
+            changed = False
+            for name, value in list(headers.items()):
+                if name.casefold() != protocol.header_name.casefold():
+                    continue
+                if any(marker.casefold() in value.casefold() for marker in _AUTH_PLACEHOLDER_MARKERS):
+                    headers[name] = replacement
+                    changed = True
+            if not changed:
+                changed_cases.append(case)
+                continue
+            changed_cases.append(
+                case.model_copy(
+                    update={
+                        "request": case.request.model_copy(update={"headers": headers}),
+                        "evidence_refs": list(dict.fromkeys([*case.evidence_refs, fixture_id])),
+                    }
+                )
+            )
+        return case_set.model_copy(update={"cases": changed_cases})
+
     @staticmethod
     def _strip_authentication_placeholder(case: TestCase) -> TestCase:
         """Remove a redacted Authorization header so configured auth can be injected."""
@@ -729,6 +846,8 @@ class ApiTestWorkflow:
         retained_auth_case_ids: list[str] = []
         unsupported_assertion_ids = set(review.unsupported_assertion_ids)
         fixture_resolver = DatabaseFixtureResolver()
+        known_points = {point.point_id for point in state["test_points"].points}
+        known_evidence = {fact.evidence_id for fact in state["evidence"].facts}
         for case, is_supplemental in [
             *((case, False) for case in draft.cases),
             *((case, True) for case in supplemental_cases),
@@ -741,22 +860,48 @@ class ApiTestWorkflow:
                         f"Retained {case.case_id}; authentication will be obtained automatically at execution when the target supports local login."
                     )
                 else:
-                    removed_invalid_case_ids.append(case.case_id)
-                    remaining_gaps.append(
-                        f"Removed Reviewer-invalid case before final assembly: {case.case_id}"
+                    deterministic_errors = validate_case(
+                        case,
+                        known_test_points=known_points,
+                        known_evidence=known_evidence,
+                        operation=state["operation"],
                     )
-                    continue
+                    if deterministic_errors:
+                        removed_invalid_case_ids.append(case.case_id)
+                        remaining_gaps.append(
+                            f"Removed Reviewer-invalid case before final assembly: {case.case_id}"
+                        )
+                        continue
+                    # A Reviewer semantic concern (for example, an assertion
+                    # that is too weak) is not a structural invalidity. Keep the
+                    # executable Case and expose the concern as a warning.
+                    remaining_gaps.append(
+                        f"Reviewer marked {case.case_id} for review, but deterministic validation passed; Case retained."
+                    )
             unsupported_in_case = sorted(
                 assertion.assertion_id
                 for assertion in case.assertions
                 if assertion.assertion_id in unsupported_assertion_ids
             )
             if unsupported_in_case:
+                supported_assertions = [
+                    assertion
+                    for assertion in case.assertions
+                    if assertion.assertion_id not in unsupported_assertion_ids
+                ]
+                # Reviewer findings are scoped to the offending assertions. Keep
+                # the Case when another executable assertion remains; only discard
+                # a Case whose entire assertion set is unusable.
                 remaining_gaps.append(
-                    "Removed case containing Reviewer-unsupported assertions: "
-                    f"{case.case_id} -> {unsupported_in_case}"
+                    "Removed Reviewer-unsupported assertions from "
+                    f"{case.case_id}: {unsupported_in_case}"
                 )
-                continue
+                if not supported_assertions:
+                    remaining_gaps.append(
+                        f"Removed Case with no executable assertions after Reviewer review: {case.case_id}"
+                    )
+                    continue
+                case = case.model_copy(update={"assertions": supported_assertions})
             if case.case_id in seen_ids:
                 remaining_gaps.append(f"Removed duplicate case ID: {case.case_id}")
                 continue
@@ -787,11 +932,19 @@ class ApiTestWorkflow:
             assembly_errors.append("no test points were generated")
         if not cases:
             assembly_errors.append("no test cases were generated")
+        # Coverage gaps are review findings, not a reason to discard every
+        # executable Case. They remain visible as warnings and can be handled by
+        # selecting the generated cases at the Human Gate.
         if missing_points:
-            assembly_errors.append(f"uncovered test points: {missing_points}")
+            remaining_gaps.append(f"Test points still uncovered: {', '.join(missing_points)}")
         if review.missing_test_point_ids:
-            assembly_errors.append(
-                f"reviewer found semantically uncovered test points: {review.missing_test_point_ids}"
+            remaining_gaps.append(
+                "Reviewer reported semantically uncovered test points: "
+                f"{review.missing_test_point_ids}"
+            )
+        if review.semantic_gaps:
+            remaining_gaps.extend(
+                f"Reviewer semantic gap: {gap}" for gap in review.semantic_gaps
             )
         if removed_invalid_case_ids:
             remaining_gaps.append(
@@ -810,7 +963,7 @@ class ApiTestWorkflow:
             )
         if review.unsupported_assertion_ids:
             remaining_gaps.append(
-                "Cases containing Reviewer-unsupported assertions were removed: "
+                "Reviewer-unsupported assertions were removed or isolated at assertion level: "
                 f"{review.unsupported_assertion_ids}"
             )
         if review.suggested_case_specs:
@@ -819,8 +972,6 @@ class ApiTestWorkflow:
                 f"follow-up: {[spec.spec_id for spec in review.suggested_case_specs]}"
             )
 
-        if missing_points:
-            remaining_gaps.append(f"Test points still uncovered: {', '.join(missing_points)}")
         unresolved_questions = list(
             dict.fromkeys(
                 [*requirement.unresolved_questions, *review.unresolved_questions]
@@ -828,8 +979,9 @@ class ApiTestWorkflow:
         )
         # Requirement Approval is the human decision for unresolved business
         # questions. Keep questions and reviewer gaps visible on Final Cases,
-        # then let the second Human Gate decide whether to execute. Missing
-        # coverage and assembly errors remain hard blockers.
+        # then let the second Human Gate decide which generated Cases to execute.
+        # A partial review finding must not hide otherwise executable Cases;
+        # only an empty generated Case set is a hard blocker.
         status = "READY" if not assembly_errors else "NEEDS_CLARIFICATION"
         final_cases = FinalCaseSet(
             final_case_set_id=f"final-{uuid4().hex}",
@@ -889,6 +1041,273 @@ class ApiTestWorkflow:
                 "unresolved_questions": list(dict.fromkeys(unresolved_questions)),
             }
         )
+
+    @staticmethod
+    def _normalize_auth_protocol_output(
+        requirement: RequirementDocument,
+        points: TestPointCollection,
+        protocol: AuthProtocol,
+        evidence: EvidenceBundle | None = None,
+    ) -> tuple[RequirementDocument, TestPointCollection]:
+        """Bind model-authored wording to the selected operation's auth evidence."""
+
+        changed = False
+        requirement_updates: dict[str, Any] = {"auth_protocol": protocol}
+
+        def normalize_values(values: list[str]) -> list[str]:
+            nonlocal changed
+            normalized: list[str] = []
+            for value in values:
+                updated, value_changed = normalize_auth_text(value, protocol)
+                changed = changed or value_changed
+                normalized.append(updated)
+            return normalized
+
+        for field_name in (
+            "preconditions",
+            "business_rules",
+            "expected_behaviors",
+            "conflicts",
+        ):
+            requirement_updates[field_name] = normalize_values(
+                list(getattr(requirement, field_name))
+            )
+
+        normalized_points: list[TestPoint] = []
+        for point in points.points:
+            title, title_changed = normalize_auth_text(point.title, protocol)
+            action, action_changed = normalize_auth_text(point.action, protocol)
+            expected, expected_changed = normalize_auth_text(point.expected_result, protocol)
+            changed = changed or title_changed or action_changed or expected_changed
+            normalized_points.append(
+                point.model_copy(
+                    update={
+                        "title": title,
+                        "action": action,
+                        "expected_result": expected,
+                    }
+                )
+            )
+
+        unresolved_questions = list(requirement.unresolved_questions)
+        fixture_by_kind = ApiTestWorkflow._auth_fixture_evidence(evidence)
+        normalized_points = ApiTestWorkflow._merge_auth_negative_points(
+            normalized_points,
+            fixture_by_kind,
+        )
+        combined_auth_semantics = ApiTestWorkflow._has_combined_auth_semantics(
+            requirement_updates
+        )
+        if combined_auth_semantics:
+            requirement_updates["expected_behaviors"] = (
+                ApiTestWorkflow._collapse_combined_auth_behaviors(
+                    requirement_updates["expected_behaviors"]
+                )
+            )
+            normalized_points = [
+                (
+                    point.model_copy(
+                        update={
+                            "title": "过期/不存在 Token 返回 401",
+                            "expected_result": "返回 HTTP 401，通常无响应体。",
+                        }
+                    )
+                    if ApiTestWorkflow._auth_negative_fixture_kind(point)
+                    in {"expired", "nonexistent", "combined"}
+                    and re.search(r"\b401\b", point.expected_result)
+                    else point
+                )
+                for point in normalized_points
+            ]
+        requirement_evidence_refs = list(requirement.evidence_refs)
+        for index, point in enumerate(normalized_points):
+            fixture_kind = ApiTestWorkflow._auth_negative_fixture_kind(point)
+            if fixture_kind is None:
+                continue
+            fixture = (
+                fixture_by_kind.get("nonexistent") or fixture_by_kind.get("expired")
+                if fixture_kind == "combined"
+                else fixture_by_kind.get(fixture_kind)
+            )
+            if fixture is None:
+                label = "过期/不存在" if fixture_kind == "combined" else (
+                    "过期" if fixture_kind == "expired" else "不存在"
+                )
+                unresolved_questions.append(
+                    f"当前接口明确要求{label} Token 负例，"
+                    f"但项目尚未配置对应 Token 夹具；请配置后再执行该 Test Point。"
+                )
+                continue
+            fixture_id, placeholder = fixture
+            action = point.action
+            if placeholder not in action:
+                action = f"{action.rstrip('。')}；鉴权值使用 {placeholder}。"
+            normalized_points[index] = point.model_copy(
+                update={
+                    "action": action,
+                    "evidence_refs": list(dict.fromkeys([*point.evidence_refs, fixture_id])),
+                }
+            )
+            if not any(item.evidence_id == fixture_id for item in requirement_evidence_refs):
+                fact = next(
+                    fact for fact in (evidence.facts if evidence else []) if fact.evidence_id == fixture_id
+                )
+                requirement_evidence_refs.append(
+                    RequirementEvidenceRef(
+                        evidence_id=fact.evidence_id,
+                        source_type=fact.source_type,
+                        reference=fact.reference,
+                        confidence=fact.confidence,
+                    )
+                )
+        if combined_auth_semantics and (
+            fixture_by_kind.get("nonexistent") or fixture_by_kind.get("expired")
+        ):
+            unresolved_questions = [
+                question
+                for question in unresolved_questions
+                if not re.search(r"(?:过期|expired).*?(?:夹具|fixture)", question, re.IGNORECASE)
+            ]
+        requirement_updates["evidence_refs"] = requirement_evidence_refs
+        if changed and protocol.status == "explicit" and protocol.prefix is None:
+            unresolved_questions.append(
+                "模型输出曾为当前接口补充不一致的 Token 前缀，已按当前接口证据校正为无前缀。"
+            )
+        if changed and protocol.status in {"unknown", "conflict"}:
+            unresolved_questions.append(
+                "模型输出自行选择了具体 Token 前缀，但当前接口证据未能确认该前缀；已改为项目配置的认证凭据。"
+            )
+        if protocol.status == "conflict":
+            unresolved_questions.extend(protocol.conflicts)
+        if protocol.conflicts:
+            unresolved_questions.extend(protocol.conflicts)
+        requirement_updates["unresolved_questions"] = list(dict.fromkeys(unresolved_questions))
+        if requirement_updates["unresolved_questions"] and requirement.confidence == "confirmed":
+            requirement_updates["confidence"] = "question"
+
+        return requirement.model_copy(update=requirement_updates), points.model_copy(
+            update={"points": normalized_points}
+        )
+
+    @staticmethod
+    def _has_combined_auth_semantics(requirement_updates: dict[str, Any]) -> bool:
+        text = " ".join(
+            value
+            for field_name in (
+                "business_rules",
+                "expected_behaviors",
+                "unresolved_questions",
+            )
+            for value in requirement_updates.get(field_name, [])
+        )
+        has_expired = bool(re.search(r"过期|expired", text, re.IGNORECASE))
+        has_nonexistent = bool(
+            re.search(r"不存在|nonexistent|伪造|forged|无效|invalid", text, re.IGNORECASE)
+        )
+        return has_expired and has_nonexistent and bool(re.search(r"\b401\b", text))
+
+    @staticmethod
+    def _collapse_combined_auth_behaviors(values: list[str]) -> list[str]:
+        candidate_indexes = [
+            index
+            for index, value in enumerate(values)
+            if re.search(r"(?:过期|expired|不存在|nonexistent)", value, re.IGNORECASE)
+            and re.search(r"(?:token|令牌|授权|会话)", value, re.IGNORECASE)
+            and re.search(r"\b401\b", value)
+        ]
+        if not candidate_indexes:
+            return [*values, "携带过期/不存在 Token 时返回 HTTP 401，通常无响应体。"]
+        first = min(candidate_indexes)
+        retained = [value for index, value in enumerate(values) if index not in candidate_indexes]
+        retained.insert(first, "携带过期/不存在 Token 时返回 HTTP 401，通常无响应体。")
+        return retained
+
+    @staticmethod
+    def _auth_negative_fixture_kind(point: TestPoint) -> str | None:
+        if point.category != "negative":
+            return None
+        text = " ".join((point.title, point.action, point.expected_result)).casefold()
+        if re.search(r"过期\s*/\s*不存在|expired\s*/\s*nonexistent", text):
+            return "combined"
+        if "$auth_fixture[nonexistent:token]" in text:
+            return "nonexistent"
+        if "$auth_fixture[expired:token]" in text:
+            return "expired"
+        if re.search(r"(?:过期|expired)[^\n。.!?]{0,40}(?:token|令牌|授权|会话)", text) or re.search(
+            r"(?:token|令牌|授权|会话)[^\n。.!?]{0,40}(?:过期|expired)", text
+        ):
+            return "expired"
+        if re.search(
+            r"(?:不存在|nonexistent|伪造|forged|随机|random|无效|invalid)"
+            r"[^\n。.!?]{0,40}(?:token|令牌|授权|会话)",
+            text,
+        ) or re.search(
+            r"(?:token|令牌|授权|会话)[^\n。.!?]{0,40}"
+            r"(?:不存在|nonexistent|伪造|forged|随机|random|无效|invalid)",
+            text,
+        ):
+            return "nonexistent"
+        return None
+
+    @staticmethod
+    def _merge_auth_negative_points(
+        points: list[TestPoint],
+        fixtures: dict[str, tuple[str, str]],
+    ) -> list[TestPoint]:
+        """Merge expired/nonexistent auth failures with the same HTTP outcome."""
+
+        candidates = [
+            point
+            for point in points
+            if ApiTestWorkflow._auth_negative_fixture_kind(point) in {"expired", "nonexistent"}
+        ]
+        if len(candidates) < 2:
+            return points
+        if not all(re.search(r"\b401\b", point.expected_result) for point in candidates):
+            return points
+
+        primary = candidates[0]
+        fixture = fixtures.get("nonexistent") or fixtures.get("expired")
+        evidence_refs = list(
+            dict.fromkeys(
+                reference
+                for point in candidates
+                for reference in point.evidence_refs
+            )
+        )
+        action = primary.action
+        if fixture:
+            fixture_id, placeholder = fixture
+            action = f"使用鉴权夹具 {placeholder} 请求当前接口。"
+            evidence_refs.append(fixture_id)
+        merged = primary.model_copy(
+            update={
+                "title": "过期/不存在 Token 返回 401",
+                "action": action,
+                "expected_result": "返回 HTTP 401。",
+                "evidence_refs": list(dict.fromkeys(evidence_refs)),
+            }
+        )
+        candidate_ids = {point.point_id for point in candidates}
+        retained = [point for point in points if point.point_id not in candidate_ids]
+        retained.insert(min(points.index(point) for point in candidates), merged)
+        return retained
+
+    @staticmethod
+    def _auth_fixture_evidence(
+        evidence: EvidenceBundle | None,
+    ) -> dict[str, tuple[str, str]]:
+        fixtures: dict[str, tuple[str, str]] = {}
+        if evidence is None:
+            return fixtures
+        for fact in evidence.facts:
+            if fact.source_type.casefold() != "auth_fixture":
+                continue
+            kind = fact.metadata.get("fixture_kind")
+            placeholder = fact.metadata.get("token_placeholder")
+            if kind and placeholder:
+                fixtures[kind] = (fact.evidence_id, placeholder)
+        return fixtures
 
     @staticmethod
     def _normalize_test_points(
