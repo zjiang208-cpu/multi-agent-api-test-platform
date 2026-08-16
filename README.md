@@ -6,19 +6,6 @@
 
 > 从需求文档到可执行测试报告的接口测试工作台。
 
-## 产品演示
-
-本仓库包含一条完整的 7 阶段演示流程：需求文档、接口选择、需求分析、需求确认、
-用例设计、执行确认、测试执行和测试报告。截图按实际运行顺序整理在
-[`docs/screenshots/`](docs/screenshots/)，流程说明和部署边界见
-[`docs/workflow.md`](docs/workflow.md)。
-
-![项目概览](docs/screenshots/01-project-overview.png)
-
-![需求确认](docs/screenshots/06-requirement-confirmation.png)
-
-![测试报告](docs/screenshots/10-test-report.png)
-
 ## 核心能力
 
 - Markdown、OpenAPI 和单接口 YAML 契约导入
