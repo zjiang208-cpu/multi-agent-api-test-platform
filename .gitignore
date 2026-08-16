@@ -25,5 +25,6 @@ tmp/
 *.log
 *.out
 *.err
+*_metrics_*.json
 .DS_Store
 Thumbs.db
