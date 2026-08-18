@@ -17,13 +17,13 @@ def test_three_api_prompt_files_are_independently_versioned_and_hashed():
     assert {name: prompt.definition.version for name, prompt in prompts.items()} == {
         "nlu": "1.5.4",
         "designer": "1.5.6",
-        "reviewer": "1.3.6",
+        "reviewer": "1.3.7",
     }
     assert all(len(prompt.sha256) == 64 for prompt in prompts.values())
     assert len({prompt.source_path for prompt in prompts.values()}) == 3
-    assert prompt_manifest()["reviewer_prompt_version"] == "1.3.6"
+    assert prompt_manifest()["reviewer_prompt_version"] == "1.3.7"
     assert prompts["designer"].definition.retry.max_attempts == 2
-    assert prompts["reviewer"].definition.retry.max_attempts == 1
+    assert prompts["reviewer"].definition.retry.max_attempts == 2
     assert prompts["nlu"].definition.retry.max_attempts == 2
     assert len(prompts["nlu"].definition.few_shot_examples) == 2
     assert len(prompts["designer"].definition.few_shot_examples) == 2

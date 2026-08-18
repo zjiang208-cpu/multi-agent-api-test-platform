@@ -26,5 +26,6 @@ tmp/
 *.out
 *.err
 *_metrics_*.json
+baseline_*_execution_summary.md
 .DS_Store
 Thumbs.db

@@ -144,8 +144,101 @@ def test_provider_agent_records_bounded_call_metrics():
     assert telemetry.metadata()["llm_nlu_calls"] == "1"
 
 
+def test_provider_agent_repairs_schema_output_without_repeating_full_reasoning():
+    class RepairThenSucceedProvider:
+        provider_name = "test"
+
+        def __init__(self):
+            self.calls = []
+
+        def complete(self, *, system, user, response_model, thinking_mode="enabled"):
+            self.calls.append(
+                {
+                    "system": system,
+                    "user": user,
+                    "thinking_mode": thinking_mode,
+                }
+            )
+            if len(self.calls) == 1:
+                raise ProviderError(
+                    "provider output failed schema validation",
+                    category="schema_validation",
+                    repair_payload={"requirement": {"requirement_id": "REQ-GET-ITEM-001"}},
+                    validation_issues=("$.test_points: missing",),
+                    output_chars=80,
+                )
+            return _requirement()
+
+    telemetry = LlmTelemetry()
+    provider = RepairThenSucceedProvider()
+    agent = provider_agent(
+        provider,
+        system_prompt=REQUIREMENT_AGENT_SYSTEM,
+        response_model=RequirementAgentOutput,
+        max_attempts=2,
+        telemetry=telemetry,
+        stage="nlu",
+    )
+
+    result = agent.invoke(
+        {
+            "operation": _requirement().requirement.api,
+            "source_document": "password=must-not-leak",
+            "evidence": EvidenceBundle(operation_id="get-item"),
+        }
+    )
+
+    assert result.requirement.requirement_id == "REQ-GET-ITEM-001"
+    assert len(provider.calls) == 2
+    assert provider.calls[0]["thinking_mode"] == "enabled"
+    assert provider.calls[0]["system"] == REQUIREMENT_AGENT_SYSTEM
+    assert provider.calls[1]["thinking_mode"] == "disabled"
+    assert provider.calls[1]["system"] != REQUIREMENT_AGENT_SYSTEM
+    repair_payload = json.loads(provider.calls[1]["user"])
+    assert repair_payload["task"] == "repair_structured_output"
+    assert repair_payload["validation_errors"] == ["$.test_points: missing"]
+    assert repair_payload["previous_output"]["requirement"]["requirement_id"] == "REQ-GET-ITEM-001"
+    assert "must-not-leak" not in provider.calls[1]["user"]
+
+    metadata = telemetry.metadata()
+    assert metadata["llm_nlu_calls"] == "2"
+    assert metadata["llm_nlu_call_1_mode"] == "generate"
+    assert metadata["llm_nlu_call_1_error_category"] == "schema_validation"
+    assert metadata["llm_nlu_call_1_validation_issues"] == "$.test_points: missing"
+    assert metadata["llm_nlu_call_2_mode"] == "repair"
+    assert metadata["llm_nlu_call_2_status"] == "success"
+
+
+def test_provider_agent_does_not_retry_non_retryable_provider_errors():
+    class RejectedProvider:
+        provider_name = "test"
+
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, *, system, user, response_model, thinking_mode="enabled"):
+            self.calls += 1
+            raise ProviderError(
+                "LLM provider request failed: HTTPStatusError",
+                category="http_4xx",
+                retryable=False,
+            )
+
+    provider = RejectedProvider()
+    agent = provider_agent(
+        provider,
+        system_prompt=REQUIREMENT_AGENT_SYSTEM,
+        response_model=RequirementAgentOutput,
+        max_attempts=2,
+    )
+
+    with pytest.raises(ProviderError, match="HTTPStatusError"):
+        agent.invoke({"operation": _requirement().requirement.api})
+    assert provider.calls == 1
+
+
 def test_case_prompts_publish_executor_constraints():
-    assert WORKFLOW_PROMPT_VERSION == "nlu:1.5.4|designer:1.5.6|reviewer:1.3.6"
+    assert WORKFLOW_PROMPT_VERSION == "nlu:1.5.4|designer:1.5.6|reviewer:1.3.7"
     assert len(PROMPT_MANIFEST["designer_prompt_sha256"]) == 64
     assert "status_code" in DESIGNER_AGENT_SYSTEM
     assert "mode=supplement" in DESIGNER_AGENT_SYSTEM

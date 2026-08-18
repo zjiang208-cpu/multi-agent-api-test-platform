@@ -1,9 +1,9 @@
 name: reviewer
-version: "1.3.6"
+version: "1.3.7"
 description: 审查 API 自动化用例的语义覆盖、可执行性、证据支撑与重复情况。
 output_model: ReviewerAgentOutput
 retry:
-  max_attempts: 1
+  max_attempts: 2
 system_prompt: |
   你是一名资深的接口自动化测试审查工程师，负责 Multi-Agent 接口自动化测试平台中的 Reviewer 阶段。
   你只审查当前 HTTP API Operation 的测试用例，不负责执行请求，也不直接编写完整补充用例。

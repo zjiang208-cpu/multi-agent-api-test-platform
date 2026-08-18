@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import httpx
 import pytest
 from pydantic import BaseModel
 
@@ -81,6 +82,20 @@ def test_structured_parser_budget_and_designer_validation():
     assert provider.calls
 
 
+def test_structured_parser_exposes_bounded_schema_repair_context():
+    with pytest.raises(ProviderError) as captured:
+        StructuredOutputParser.parse(
+            '{"value":"wrong","token":"must-not-persist"}',
+            JsonValue,
+        )
+
+    error = captured.value
+    assert error.category == "schema_validation"
+    assert error.validation_issues == ("$.value: int_parsing",)
+    assert error.repair_payload == {"value": "wrong", "token": "<redacted>"}
+    assert "must-not-persist" not in str(error)
+
+
 def test_one_pass_reviewer_reports_omissions_without_scoring_or_repair():
     requirement = RequirementDocument(
         requirement_id="REQ-1",
@@ -114,3 +129,52 @@ def test_openai_provider_requires_non_secret_environment_reference(monkeypatch):
     )
     with pytest.raises(SecretReferenceError):
         provider.complete(system="system", user="user", response_model=JsonValue)
+
+
+def test_openai_provider_keeps_main_thinking_and_captures_safe_call_metadata(monkeypatch):
+    monkeypatch.setenv("PHASE5_LLM_KEY", "do-not-return")
+    captured_payload = {}
+
+    def fake_post(url, *, headers, json, timeout, follow_redirects):
+        captured_payload.update(json)
+        request = httpx.Request("POST", url)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": '{"value":7}'},
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 120,
+                    "completion_tokens": 45,
+                    "completion_tokens_details": {"reasoning_tokens": 30},
+                },
+            },
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = OpenAICompatibleProvider(
+        base_url="https://example.invalid/v1",
+        model="demo",
+        api_key_ref="env:PHASE5_LLM_KEY",
+    )
+
+    result = provider.complete(
+        system="Return JSON",
+        user="input",
+        response_model=JsonValue,
+        thinking_mode="enabled",
+    )
+
+    assert result.value == 7
+    assert captured_payload["thinking"] == {"type": "enabled"}
+    assert captured_payload["response_format"] == {"type": "json_object"}
+    assert captured_payload["max_tokens"] == 32_768
+    assert provider.last_call_info.finish_reason == "stop"
+    assert provider.last_call_info.prompt_tokens == 120
+    assert provider.last_call_info.completion_tokens == 45
+    assert provider.last_call_info.reasoning_tokens == 30
