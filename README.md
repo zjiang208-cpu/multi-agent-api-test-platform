@@ -1,4 +1,4 @@
-# AI 接口自动化测试平台
+# 基于Multi-Agent的接口自动化测试平台
 
 > 将接口需求文档转换为可追溯的测试点、测试用例和执行报告。
 > AI 负责理解和设计，确定性代码负责执行和判定，人工确认负责控制风险。
@@ -41,16 +41,21 @@
 ### 30 秒看懂闭环
 
 ```mermaid
-flowchart LR
-    A["需求文档 / OpenAPI / YAML"] --> B["接口目录与 Evidence"]
-    B --> C["NLU：提取规则与测试点"]
-    C --> D{"需求确认"}
-    D --> E["Designer：生成测试用例"]
-    E --> F["Reviewer：语义审查"]
-    F --> G{"执行确认"}
-    G --> H["确定性 HTTP 执行"]
-    H --> I["断言评估"]
-    I --> J["HTML 测试报告"]
+flowchart TB
+    subgraph S1["需求理解"]
+        direction LR
+        A["需求文档 / OpenAPI / YAML"] --> B["接口目录与 Evidence"] --> C["NLU：规则与测试点"]
+    end
+    subgraph S2["用例设计"]
+        direction LR
+        D{"需求确认"} --> E["Designer：生成用例"] --> F["Reviewer：语义审查"]
+    end
+    subgraph S3["安全执行与结果反馈"]
+        direction LR
+        G{"执行确认"} --> H["确定性 HTTP 执行"] --> I["断言评估"] --> J["HTML 测试报告"]
+    end
+    C --> D
+    F --> G
 ```
 
 ### 场景一：从需求文档到可分析接口
@@ -62,23 +67,27 @@ flowchart LR
 
 ### 场景二：AI 分析必须能够回到证据
 
-<p align="center">
-  <img src="docs/screenshots/05-requirement-analysis.png" width="48%" alt="需求分析：提取业务规则和测试点">
-  <img src="docs/screenshots/06-requirement-confirmation.png" width="48%" alt="需求确认：查看规则、测试点和证据来源">
-</p>
-
 NLU 根据需求原文和关联证据提取业务规则、成功与失败场景、参数约束和待确认问题。
 在进入用例设计前，用户可以检查规则、测试点和证据来源；未确认的需求快照不能继续进入 Designer。
 
-### 场景三：执行前有风险闸门，执行后有可解释报告
+<p align="center"><img src="docs/screenshots/05-requirement-analysis.png" width="960" alt="需求分析：提取业务规则和测试点"></p>
 
-<p align="center">
-  <img src="docs/screenshots/09-execution-confirmation.png" width="48%" alt="执行确认：确认目标环境、用例范围和副作用策略">
-  <img src="docs/screenshots/10-test-report.png" width="48%" alt="测试报告：查看 PASS、FAIL 和断言明细">
-</p>
+需求分析完成后，用户可以在确认页逐项检查业务规则、测试点和证据来源：
+
+<p align="center"><img src="docs/screenshots/06-requirement-confirmation.png" width="960" alt="需求确认：查看规则、测试点和证据来源"></p>
+
+### 场景三：执行前有风险闸门，执行后有可解释报告
 
 执行前，平台展示目标环境、用例数量、副作用用例和执行策略，要求人工确认后才会发起真实请求。
 执行层按确定性规则完成 HTTP 请求和断言评估，报告中可以查看每条用例的 HTTP 状态、断言结果和失败详情。
+
+执行前确认目标环境和用例范围：
+
+<p align="center"><img src="docs/screenshots/09-execution-confirmation.png" width="960" alt="执行确认：确认目标环境、用例范围和副作用策略"></p>
+
+执行完成后查看 PASS、FAIL、HTTP 状态和断言明细：
+
+<p align="center"><img src="docs/screenshots/10-test-report.png" width="960" alt="测试报告：查看 PASS、FAIL 和断言明细"></p>
 
 完整的十张流程截图和阶段说明见 [`docs/workflow.md`](docs/workflow.md)。
 
