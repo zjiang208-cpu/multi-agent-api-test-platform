@@ -17,7 +17,7 @@ interface OperationsPageProps {
   parsedDocument: ParsedRequirementDocument | null;
   selectedOperation: OperationContract | null;
   selectedOperationIds: string[];
-  completedOperationIds: Set<string>;
+  completedOperationIds: ReadonlySet<string>;
   activeFlowOperationId: string | null | undefined;
   busy: boolean;
   onNavigate: (page: PageKey) => void;
@@ -91,4 +91,3 @@ export function OperationsPage({
       </section>}
     </>;
 }
-
