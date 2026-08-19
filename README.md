@@ -176,6 +176,7 @@ $env:DEEPSEEK_API_KEY = "只在本机设置，不要提交到仓库"
 最近一次本地验证结果：
 
 - Backend：`118 passed`
+- Backend coverage：`77%`（branch coverage，CI 门槛 `75%`）
 - Frontend：`npm run build` 构建成功
 - CI：推送和 Pull Request 会分别执行后端测试与前端构建，配置见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。
 
@@ -184,6 +185,9 @@ $env:DEEPSEEK_API_KEY = "只在本机设置，不要提交到仓库"
 ```powershell
 cd backend
 .\.venv\Scripts\python.exe -m pytest
+
+# 查看覆盖率并生成 HTML 报告
+.\.venv\Scripts\python.exe -m pytest --cov=app --cov-report=term-missing --cov-report=html
 
 cd ..\frontend
 npm run build
