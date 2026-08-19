@@ -36,6 +36,8 @@ import { createWorkflowActions } from "./app/workflowActions";
 import { createDocumentActions } from "./app/documentActions";
 import { createProjectActions } from "./app/projectActions";
 import { createExecutionActions } from "./app/executionActions";
+import { createCaseSelectionActions } from "./app/caseSelectionActions";
+import { createSelectionActions } from "./app/selectionActions";
 import { useProjectWorkspace } from "./hooks/useProjectWorkspace";
 import "./styles.css";
 
@@ -165,6 +167,52 @@ export default function App() {
     parseFileDocument,
   } = documentActions;
 
+  const selectionActions = createSelectionActions({
+    activeFlowOperationId,
+    selectedOperationIds,
+    completedOperationIds,
+    selectedProject,
+    requirementDocuments,
+    parsedDocument,
+    operations,
+    setSelectedOperation,
+    setSelectedOperationIds,
+    setMessage,
+    setQueue,
+    setWorkflow,
+    setApproval,
+    setBatchApproval,
+    setExecution,
+    setStartingWorkflow,
+    setParsedDocument,
+    setDocumentName,
+    setDocumentText,
+    setPage,
+    setSelectedProject,
+    setFinalCaseSets,
+  });
+  const {
+    selectOperation,
+    selectProject,
+    toggleOperation,
+  } = selectionActions;
+
+
+  const caseSelectionActions = createCaseSelectionActions({
+    allFinalCases,
+    setSelectedCaseIds,
+    setBatchApproval,
+    setExecution,
+    setSelectedResult,
+    setSideEffectsConfirmed,
+  });
+  const {
+    toggleCase,
+    toggleCaseSet,
+    toggleAllCases,
+  } = caseSelectionActions;
+
+
   const executionActions = createExecutionActions({
     selectedProject,
     selectedCaseIds,
@@ -288,99 +336,6 @@ export default function App() {
 
 
 
-  function selectOperation(operation: OperationContract) {
-    if (!activeFlowOperationId && selectedOperationIds.includes(operation.operation_id)) {
-      setSelectedOperation(null);
-      setSelectedOperationIds([]);
-      setMessage(`已取消选择 ${operation.method} ${operation.path}。`);
-      return;
-    }
-    if (activeFlowOperationId && activeFlowOperationId !== operation.operation_id) {
-      setMessage("请先完成当前接口的用例生成，再选择下一个接口。");
-      return;
-    }
-    if (completedOperationIds.has(operation.operation_id)) {
-      setMessage("该接口已经生成测试用例，可以在“测试用例”页面查看。");
-      return;
-    }
-    // 保留已累计生成的用例，但开始新接口前清理上一个接口的临时队列、
-    // 执行许可和报告状态。
-    setQueue(null);
-    setWorkflow(null);
-    setApproval(null);
-    setBatchApproval(null);
-    setExecution(null);
-    setStartingWorkflow(false);
-    const sourceDocumentId = operation.source_document_id
-      ?? operation.source_refs?.find((source) => source.source_document_id)?.source_document_id;
-    const sourceDocument = requirementDocuments.find(
-      (document) => document.document_id === sourceDocumentId,
-    ) ?? null;
-    if (sourceDocument) {
-      setParsedDocument(sourceDocument);
-      setDocumentName(sourceDocument.filename);
-      setDocumentText("");
-      if (selectedProject) {
-        window.sessionStorage.setItem(
-          `api-test-platform.document-id.${selectedProject.project_id}`,
-          sourceDocument.document_id,
-        );
-      }
-    }
-    setSelectedOperation(operation);
-    setSelectedOperationIds([operation.operation_id]);
-    setPage(sourceDocument || parsedDocument ? "operations" : "documents");
-    setMessage(sourceDocument || parsedDocument ? `已选择 ${operation.method} ${operation.path}。` : "已选择接口，请先解析原始需求文档。");
-  }
-
-
-  function selectProject(project: TestProject) {
-    setSelectedProject(project);
-    setSelectedOperation(null);
-    setSelectedOperationIds([]);
-    setQueue(null);
-    setFinalCaseSets([]);
-    setWorkflow(null);
-    setApproval(null);
-    setExecution(null);
-    setStartingWorkflow(false);
-    setPage((current) => current === "settings" ? "settings" : "overview");
-    setMessage(`已切换到项目“${project.name}”。`);
-  }
-
-  function prepareNewCaseSelection() {
-    setBatchApproval(null);
-    setExecution(null);
-    setSelectedResult(null);
-    setSideEffectsConfirmed(false);
-  }
-
-  function toggleCase(caseId: string) {
-    prepareNewCaseSelection();
-    setSelectedCaseIds((current) => current.includes(caseId) ? current.filter((id) => id !== caseId) : [...current, caseId]);
-  }
-
-  function toggleCaseSet(caseSet: FinalCaseSet) {
-    const ids = caseSet.cases.map((item) => item.case_id);
-    prepareNewCaseSelection();
-    setSelectedCaseIds((current) => {
-      const allSelected = ids.every((id) => current.includes(id));
-      return allSelected
-        ? current.filter((id) => !ids.includes(id))
-        : [...current, ...ids.filter((id) => !current.includes(id))];
-    });
-  }
-
-  function toggleAllCases() {
-    const ids = allFinalCases.map((item) => item.case_id);
-    prepareNewCaseSelection();
-    setSelectedCaseIds((current) => ids.every((id) => current.includes(id)) ? [] : ids);
-  }
-
-  function toggleOperation(operationId: string) {
-    const operation = operations.find((item) => item.operation_id === operationId);
-    if (operation) selectOperation(operation);
-  }
 
 
 
