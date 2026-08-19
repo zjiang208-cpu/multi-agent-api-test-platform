@@ -35,6 +35,8 @@ import { ProjectSettingsPage } from "./components/ProjectSettingsPage";
 import { RequirementDocumentsPage } from "./components/RequirementDocumentsPage";
 import { RequirementReviewPage } from "./components/RequirementReviewPage";
 import { TestCasesPage } from "./components/TestCasesPage";
+import { ExecutionPage } from "./components/ExecutionPage";
+import { ReportsPage } from "./components/ReportsPage";
 import { downloadReportHtml } from "./app/report";
 import "./styles.css";
 
@@ -1290,105 +1292,36 @@ export default function App() {
 
 
   function renderExecution() {
-    if (!allFinalCases.length) return <div className="empty-card empty-warning"><div className="empty-mark">!</div><h3>还没有可执行用例</h3><p>请先选择一个接口并完成需求确认与用例设计。</p><button className="button button-secondary" onClick={() => setPage("operations")}>选择接口</button></div>;
-    return <><div className="page-heading"><div><span className="kicker">执行前确认</span><h2>统一执行确认</h2><p>确认目标环境、服务地址、用例数量和可能产生副作用的用例，然后批量执行。</p></div><span className="status-badge status-warning">执行前人工确认</span></div><section className="card gate-card"><div className="gate-title"><div><span className="kicker">批次执行范围</span><h3>{finalCaseSets.length} 个接口 · {allFinalCases.length} 条测试用例</h3></div>{batchApproval && <span className="status-badge status-ready">已批准</span>}</div>{batchApproval ? <><div className="approval-banner"><strong>已批准执行 {batchApproval.selected_case_count} 条用例</strong><span>{batchApproval.target_environment}</span></div><div className="approval-details"><div><span>接口数量</span><strong>{finalCaseSets.length}</strong></div><div><span>副作用用例</span><strong>{batchApproval.side_effect_case_ids.length || "无"}</strong></div><div><span>自动回归</span><strong>{batchApproval.auto_regression_allowed ? "允许" : "不允许"}</strong></div></div><div className="gate-actions"><button className="button button-primary" onClick={() => void executeApproved(false)} disabled={busy}>{busy ? "执行中…" : "批量执行"}</button>{batchApproval.auto_regression_allowed && <button className="button button-secondary" onClick={() => void executeApproved(true)} disabled={busy}>自动回归未变化用例</button>}</div></> : <><div className="form-grid gate-form"><label>目标环境<input value={targetEnvironment} onChange={(event) => setTargetEnvironment(event.target.value)} placeholder="local / test / staging" /></label><label>Base URL<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label><label>确认用例数量<input value={selectedCaseIds.length} readOnly /></label></div><div className="selected-case-box"><div><strong>本次批量执行范围</strong><span>已选择 {selectedCaseIds.length} / {allFinalCases.length} 条用例</span></div><button className="button button-small button-ghost" onClick={() => setPage("cases")}>调整用例</button></div>{sideEffectCaseIds.length > 0 && <label className="danger-confirm"><input type="checkbox" checked={sideEffectsConfirmed} onChange={(event) => setSideEffectsConfirmed(event.target.checked)} /><span><strong>我确认以下用例可能产生副作用</strong><small>{sideEffectCaseIds.join("、")}</small></span></label>}<div className="gate-submit"><button className="button button-primary" onClick={() => void approveForExecution()} disabled={busy || !selectedCaseIds.length || !baseUrl.trim() || (sideEffectCaseIds.length > 0 && !sideEffectsConfirmed)}>确认并生成批量执行许可</button><span>批准后仍不会自动执行，需再次点击“批量执行”。</span></div></>}</section></>;
+    return <ExecutionPage
+      allFinalCases={allFinalCases}
+      finalCaseSets={finalCaseSets}
+      batchApproval={batchApproval}
+      selectedCaseIds={selectedCaseIds}
+      targetEnvironment={targetEnvironment}
+      baseUrl={baseUrl}
+      sideEffectCaseIds={sideEffectCaseIds}
+      sideEffectsConfirmed={sideEffectsConfirmed}
+      busy={busy}
+      onNavigate={setPage}
+      onTargetEnvironmentChange={setTargetEnvironment}
+      onBaseUrlChange={setBaseUrl}
+      onSideEffectsConfirmedChange={setSideEffectsConfirmed}
+      onApproveForExecution={() => void approveForExecution()}
+      onExecuteApproved={(autoRegression) => void executeApproved(autoRegression)}
+    />;
   }
 
   function renderReports() {
-    if (!execution) return <div className="empty-card"><div className="empty-mark">报</div><h3>还没有执行报告</h3><p>确认执行范围并运行用例后，报告会在这里展示。</p><button className="button button-primary" onClick={() => setPage("execution")}>去执行中心</button></div>;
-    const resultTitle = new Map(allFinalCases.map((item) => [item.case_id, item.title]));
-    const resultsByOperation = [...execution.run.results.reduce((grouped, result) => {
-      const operationId = result.api_operation_id ?? result.requirement_id;
-      grouped.set(operationId, [...(grouped.get(operationId) ?? []), result]);
-      return grouped;
-    }, new Map<string, ExecutionResult[]>()).entries()];
-    return <>
-      <div className="page-heading">
-        <div><span className="kicker">执行结果</span><h2>报告中心</h2><p>查看批量执行结果、HTTP 状态和每条断言的字段、期望值与实际值。</p></div>
-        <div className="page-heading-actions">
-          <span className={"status-badge " + (execution.report.status === "passed" ? "status-ready" : "status-danger")}>{statusText(execution.report.status)}</span>
-          <button className="button button-secondary" onClick={exportReportHtml}>导出 HTML 报告</button>
-        </div>
-      </div>
-      <div className="stats-grid">
-        <div className="metric-card"><span>总用例</span><strong>{execution.report.total_cases}</strong><small>本次批量执行</small></div>
-        <div className="metric-card"><span>PASS</span><strong className="metric-success">{execution.report.passed_cases}</strong><small>通过用例</small></div>
-        <div className="metric-card"><span>FAIL</span><strong className="metric-danger">{execution.report.failed_cases}</strong><small>断言或业务结果不符合预期</small></div>
-        <div className="metric-card"><span>断言失败</span><strong className="metric-danger">{execution.report.assertion_failures}</strong><small>共 {execution.report.assertion_total} 条断言</small></div>
-      </div>
-      <section className="card report-library-card">
-        <div className="toolbar">
-          <div><strong>执行明细</strong><span>Run ID：{execution.run.run_id}</span></div>
-          <span className="source-text">{execution.run.target_environment ?? "local"}</span>
-        </div>
-        <div className="report-accordion-list">{resultsByOperation.map(([operationId, results]) => {
-          const operation = operations.find((item) => item.operation_id === operationId);
-          const passed = results.filter((item) => item.status === "passed").length;
-          return <details className="report-accordion" key={operationId}>
-            <summary><span><strong>{operation ? `${operation.method} ${operation.path}` : operationId}</strong><small>{results.length} 条结果 · {passed} 条通过</small></span><span className={`status-badge ${passed === results.length ? "status-ready" : "status-danger"}`}>{passed === results.length ? "全部通过" : "存在失败"}</span></summary>
-            <div className="table-wrap"><table>
-              <thead><tr><th>用例编号</th><th>用例名称</th><th>结果</th><th>HTTP 状态</th><th>断言</th><th>操作</th></tr></thead>
-              <tbody>{results.map((result) => {
-              const passedAssertions = result.assertion_results.filter((assertion) => assertion.passed).length;
-              return <tr key={result.case_id}>
-                <td><code>{result.case_id}</code></td>
-                <td>{result.case_title ?? resultTitle.get(result.case_id) ?? "—"}</td>
-                <td><span className={"status-badge status-" + (result.status === "passed" ? "ready" : result.status === "failed" ? "danger" : "warning")}>{statusText(result.status)}</span></td>
-                <td>{result.status_code ?? "—"}</td>
-                <td><span className="assertion-summary">{passedAssertions} / {result.assertion_results.length} 通过</span></td>
-                <td><button className="button button-small button-ghost" onClick={() => setSelectedResult(result)}>查看详情</button></td>
-              </tr>;
-              })}</tbody>
-            </table></div>
-          </details>;
-        })}</div>
-      </section>
-      {selectedResult && <div className="modal-backdrop" role="presentation" onClick={() => setSelectedResult(null)}>
-        <section className="result-modal" role="dialog" aria-modal="true" aria-labelledby="result-detail-title" onClick={(event) => event.stopPropagation()}>
-          <button className="modal-close" aria-label="关闭断言详情" onClick={() => setSelectedResult(null)}>×</button>
-          <div className="result-modal-heading">
-            <div>
-              <span className="kicker">执行详情</span>
-              <h2 id="result-detail-title">断言详情</h2>
-              <p>{selectedResult.case_title ?? resultTitle.get(selectedResult.case_id) ?? selectedResult.case_id}</p>
-            </div>
-            <span className={"status-badge status-" + (selectedResult.status === "passed" ? "ready" : selectedResult.status === "failed" ? "danger" : "warning")}>{statusText(selectedResult.status)}</span>
-          </div>
-          <div className="result-meta-grid">
-            <div><span>请求方法</span><strong>{selectedResult.method}</strong></div>
-            <div><span>HTTP 状态</span><strong>{selectedResult.status_code ?? "—"}</strong></div>
-            <div><span>耗时</span><strong>{selectedResult.duration_ms == null ? "—" : selectedResult.duration_ms.toFixed(1) + " ms"}</strong></div>
-            <div className="result-meta-wide"><span>请求 URL</span><code>{selectedResult.url}</code></div>
-          </div>
-          {selectedResult.error_message && <div className="callout callout-danger"><strong>{selectedResult.error_category ?? "执行错误"}</strong><p>{selectedResult.error_message}</p></div>}
-          <div className="assertion-detail-heading">
-            <strong>断言列表</strong>
-            <span>{selectedResult.assertion_results.filter((item) => item.passed).length} / {selectedResult.assertion_results.length} 通过</span>
-          </div>
-          {selectedResult.assertion_results.length ? <div className="assertion-detail-list">
-            {selectedResult.assertion_results.map((assertion) => <article className={"assertion-detail-item " + (assertion.passed ? "is-passed" : "is-failed")} key={assertion.assertion_id}>
-              <div className="assertion-detail-title">
-                <div><span className={"assertion-state " + (assertion.passed ? "passed" : "failed")}>{assertion.passed ? "PASS" : "FAIL"}</span><code>{assertion.assertion_id}</code></div>
-                <span>{assertion.type ?? "类型未记录"}</span>
-              </div>
-              <dl className="assertion-detail-grid">
-                <div><dt>断言字段</dt><dd><code>{assertionTarget(assertion.type, assertion.path)}</code></dd></div>
-                <div><dt>运算符</dt><dd><code>{assertion.operator || "默认相等"}</code></dd></div>
-                <div><dt>期望值</dt><dd><pre>{formatDetailValue(assertion.expected)}</pre></dd></div>
-                <div><dt>实际值</dt><dd><pre>{formatDetailValue(assertion.actual)}</pre></dd></div>
-              </dl>
-              <p className="assertion-message">{assertion.message}</p>
-              {!!assertion.evidence_refs?.length && <p className="assertion-evidence">辅助证据：{assertion.evidence_refs.join("、")}</p>}
-            </article>)}
-          </div> : <div className="empty-inline"><p>该用例没有生成断言结果；请查看执行错误信息。</p></div>}
-          <details className="response-detail">
-            <summary>查看响应 Body</summary>
-            <pre>{formatDetailValue(selectedResult.response_body)}</pre>
-          </details>
-          <div className="modal-actions"><button className="button button-primary" onClick={() => setSelectedResult(null)}>关闭</button></div>
-        </section>
-      </div>}
-    </>;
+    return <ReportsPage
+      execution={execution}
+      allFinalCases={allFinalCases}
+      operations={operations}
+      selectedResult={selectedResult}
+      onSelectResult={setSelectedResult}
+      onClearResult={() => setSelectedResult(null)}
+      onNavigate={setPage}
+      onExportReportHtml={exportReportHtml}
+    />;
   }
 
   function renderSettings() {
