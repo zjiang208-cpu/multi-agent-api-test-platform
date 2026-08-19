@@ -39,6 +39,7 @@ import { createExecutionActions } from "./app/executionActions";
 import { createCaseSelectionActions } from "./app/caseSelectionActions";
 import { createSelectionActions } from "./app/selectionActions";
 import { useProjectWorkspace } from "./hooks/useProjectWorkspace";
+import { useExecutionState } from "./hooks/useExecutionState";
 import "./styles.css";
 
 export default function App() {
@@ -268,7 +269,25 @@ export default function App() {
     approveCurrentRequirement,
   } = workflowActions;
 
-  useProjectWorkspace({
+  useExecutionState({
+    selectedProject,
+    queue,
+    workflowId: workflow?.workflow_id,
+    finalCaseSetId: finalCases?.final_case_set_id,
+    finalCaseSetsLength: finalCaseSets.length,
+    allFinalCases,
+    execution,
+    setSelectedCaseIds,
+    setApproval,
+    setBatchApproval,
+    setExecution,
+    setSideEffectsConfirmed,
+    setSelectedResult,
+    setMessage,
+  });
+
+
+ useProjectWorkspace({
     selectedProject,
     setProjects,
     setSelectedProject,
@@ -298,40 +317,8 @@ export default function App() {
     setProjectEditor(selectedProject ? projectEditorFrom(selectedProject) : null);
   }, [selectedProject]);
 
-  useEffect(() => {
-    setSelectedCaseIds(allFinalCases.map((item) => item.case_id));
-    setApproval(null);
-    setBatchApproval(null);
-    setExecution(null);
-    setSideEffectsConfirmed(false);
-  }, [workflow?.workflow_id, finalCases?.final_case_set_id, finalCaseSets.length]);
 
-  useEffect(() => {
-    const queueRunId = queue?.run_id;
-    if (!selectedProject || !queueRunId || !["READY_FOR_EXECUTION", "READY_WITH_SKIPS"].includes(queue?.status ?? "")) return;
-    let cancelled = false;
-    const projectId = selectedProject.project_id;
-      void api.reports(projectId)
-      .then((reports) => reports
-        .filter((report) => report.queue_run_id === queueRunId)
-        .sort((left, right) => Date.parse(right.generated_at) - Date.parse(left.generated_at))[0] ?? null)
-      .then(async (report) => report ? { report, run: await api.run(projectId, report.run_id) } : null)
-      .then((restored) => {
-        if (cancelled || !restored) return;
-        setExecution(restored);
-        setMessage("已恢复刷新前的执行结果。");
-      })
-      .catch(() => {
-        if (!cancelled) setExecution(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedProject?.project_id, queue?.run_id, queue?.status]);
 
-  useEffect(() => {
-    setSelectedResult(null);
-  }, [execution?.run.run_id]);
 
 
 
