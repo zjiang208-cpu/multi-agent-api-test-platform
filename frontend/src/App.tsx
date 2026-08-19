@@ -20,7 +20,6 @@ import {
   operationsForDocument,
   overviewActions,
   projectEditorFrom,
-  sortRequirementDocuments,
   splitLines,
   workflowSteps,
 } from "./app/platform";
@@ -37,6 +36,7 @@ import { ReportsPage } from "./components/ReportsPage";
 import { WorkflowStatusPage } from "./components/WorkflowStatusPage";
 import { downloadReportHtml } from "./app/report";
 import { createWorkflowActions } from "./app/workflowActions";
+import { createDocumentActions } from "./app/documentActions";
 import { useProjectWorkspace } from "./hooks/useProjectWorkspace";
 import "./styles.css";
 
@@ -100,6 +100,40 @@ export default function App() {
   const activeNav = navItems.find((item) => item.key === page) ?? navItems[0];
   const currentStep = execution ? 6 : batchApproval ? 5 : ["READY_FOR_EXECUTION", "READY_WITH_SKIPS"].includes(queue?.status ?? "") ? 4 : startingWorkflow || workflow?.status === "WAITING_REQUIREMENT_APPROVAL" ? 2 : workflow ? 3 : parsedDocument ? 1 : 0;
   const overviewAction = overviewActions[Math.min(currentStep, overviewActions.length - 1)];
+  const documentActions = createDocumentActions({
+    activeFlowOperationId,
+    selectedProject,
+    parsedDocument,
+    documentText,
+    setParsedDocument,
+    setRequirementDocuments,
+    setDocumentText,
+    setDocumentName,
+    setDocumentError,
+    setOperations,
+    setSelectedOperation,
+    setSelectedOperationIds,
+    setQueue,
+    setWorkflow,
+    setApproval,
+    setBatchApproval,
+    setFinalCaseSets,
+    setExecution,
+    setSelectedCaseIds,
+    setStartingWorkflow,
+    setBusy,
+    setMessage,
+    setPage,
+    setParseSuccess,
+  });
+  const {
+    resetRequirementContext,
+    rememberRequirementDocument,
+    selectRequirementDocument,
+    parseTextDocument,
+    parseFileDocument,
+  } = documentActions;
+
   const workflowActions = createWorkflowActions({
     selectedOperationIds,
     selectedOperation,
@@ -198,210 +232,6 @@ export default function App() {
     setSelectedResult(null);
   }, [execution?.run.run_id]);
 
-  function resetWorkflowContext(preserveOperations = false, preserveProjectCases = false) {
-    if (!preserveOperations) setOperations([]);
-    setSelectedOperation(null);
-    setSelectedOperationIds([]);
-    setWorkflow(null);
-    setQueue(null);
-    setApproval(null);
-    setBatchApproval(null);
-    if (!preserveProjectCases) setFinalCaseSets([]);
-    setExecution(null);
-    setSelectedCaseIds([]);
-    setStartingWorkflow(false);
-  }
-
-  function resetRequirementContext() {
-    resetWorkflowContext(true, true);
-    setParsedDocument(null);
-    setDocumentError("");
-  }
-
-  function rememberRequirementDocument(document: ParsedRequirementDocument) {
-    setParsedDocument(document);
-    setRequirementDocuments((current) => sortRequirementDocuments([
-      document,
-      ...current.filter((item) => item.document_id !== document.document_id),
-    ]));
-    if (selectedProject) {
-      window.sessionStorage.setItem(`api-test-platform.document-id.${selectedProject.project_id}`, document.document_id);
-    }
-  }
-
-  function selectRequirementDocument(document: ParsedRequirementDocument) {
-    if (activeFlowOperationId) {
-      setMessage("请先完成当前接口的用例生成，再切换需求文档。");
-      return;
-    }
-    resetWorkflowContext(true, true);
-    setParsedDocument(document);
-    setDocumentText("");
-    setDocumentName(document.filename);
-    setDocumentError("");
-    if (selectedProject) {
-      window.sessionStorage.setItem(`api-test-platform.document-id.${selectedProject.project_id}`, document.document_id);
-    }
-    setMessage(`已切换到需求文档“${document.filename}”。`);
-  }
-
-  function operationReferencesDocument(operation: OperationContract, filename: string): boolean {
-    return operation.source_refs?.some((source) => {
-      const reference = source.reference ?? "";
-      return reference === filename || reference.endsWith(`\\${filename}`) || reference.endsWith(`/${filename}`);
-    }) ?? false;
-  }
-
-  function mapImportedOperations(document: ParsedRequirementDocument, imported: OperationContract[]): OperationContract[] {
-    const candidates = imported.filter((operation) => operationReferencesDocument(operation, document.filename));
-    const sourceOperations = candidates.length ? candidates : imported;
-    const deduped = new Map<string, OperationContract>();
-    sourceOperations.forEach((operation) => {
-      const source = operation.source_refs?.[0];
-      deduped.set(`${operation.method} ${operation.path}`, {
-        ...operation,
-        source_document_id: document.document_id,
-        source_refs: [{
-          source_document_id: document.document_id,
-          section: operation.summary || document.filename,
-          start_line: 1,
-          end_line: document.line_count,
-          heading: operation.summary || document.filename,
-          source_text: document.content.slice(0, 20_000),
-          reference: source?.reference ?? document.filename,
-        }],
-      });
-    });
-    return [...deduped.values()];
-  }
-
-  async function attachOperationContractDocument(document: ParsedRequirementDocument) {
-    if (!selectedProject) {
-      setParsedDocument(document);
-      setDocumentText("");
-      setPage("documents");
-      setMessage("接口契约已解析；请选择项目后重新解析，平台会自动建立接口目录映射。");
-      setParseSuccess({ filename: document.filename, documentId: document.document_id, charCount: document.char_count, lineCount: document.line_count });
-      return;
-    }
-    setMessage(`需求文档解析完成，正在自动识别“${document.filename}”中的接口…`);
-    const discovered = await api.ingestAndDiscoverRequirement(selectedProject.project_id, document.filename, document.content);
-    const storedDocument = discovered.document;
-    const documentOperations = operationsForDocument(discovered.operations, storedDocument.document_id);
-    rememberRequirementDocument(storedDocument);
-    setDocumentText("");
-    setOperations(discovered.operations);
-    setSelectedOperation(null);
-    setSelectedOperationIds([]);
-    setPage("operations");
-    setMessage(`需求文档解析完成，已自动识别 ${documentOperations.length} 个可测试接口。`);
-    setParseSuccess({ filename: storedDocument.filename, documentId: storedDocument.document_id, charCount: storedDocument.char_count, lineCount: storedDocument.line_count, operationCount: documentOperations.length });
-  }
-
-  async function parseTextDocument() {
-    if (activeFlowOperationId) {
-      setMessage("请先完成当前接口的用例生成，再上传新的需求文档。");
-      return;
-    }
-    if (!documentText.trim()) {
-      setDocumentError("请先粘贴需求文档内容。");
-      return;
-    }
-    resetRequirementContext();
-    setBusy(true);
-    setDocumentError("");
-    setParseSuccess(null);
-    setMessage("正在解析需求文档…");
-    try {
-      const result = await api.parseRequirementText("pasted-requirement.md", documentText);
-      if (result.detected_kind === "operation_contract") {
-        await attachOperationContractDocument(result);
-        return;
-      }
-      if (selectedProject) {
-        setMessage("需求文档解析完成，正在从需求原文建立接口来源映射…");
-        const discovered = await api.ingestAndDiscoverRequirement(selectedProject.project_id, result.filename, result.content);
-        const documentOperations = operationsForDocument(discovered.operations, discovered.document.document_id);
-        rememberRequirementDocument(discovered.document);
-        setDocumentText("");
-        setOperations(discovered.operations);
-        setSelectedOperation(null);
-        setSelectedOperationIds([]);
-        setPage("operations");
-        setMessage(`已从需求文档识别 ${documentOperations.length} 个可测试接口。`);
-        setParseSuccess({ filename: discovered.document.filename, documentId: discovered.document.document_id, charCount: discovered.document.char_count, lineCount: discovered.document.line_count, operationCount: documentOperations.length });
-        return;
-      }
-      setParsedDocument(result);
-      setDocumentText("");
-      setPage("documents");
-      setMessage(`已解析“${result.filename}”，识别 ${result.sections.length} 个文档章节。`);
-      setParseSuccess({ filename: result.filename, documentId: result.document_id, charCount: result.char_count, lineCount: result.line_count });
-    } catch (error) {
-      setDocumentError(error instanceof Error ? error.message : "需求文档解析失败");
-      setMessage("需求文档解析失败，请检查格式和内容。");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function parseFileDocument(file: File) {
-    if (activeFlowOperationId) {
-      setMessage("请先完成当前接口的用例生成，再上传新的需求文档。");
-      return;
-    }
-    resetRequirementContext();
-    setBusy(true);
-    setDocumentError("");
-    setParseSuccess(null);
-    setMessage(`正在解析文件“${file.name}”…`);
-    try {
-      const result = await api.parseRequirementFile(file);
-      if (result.detected_kind === "operation_contract") {
-        await attachOperationContractDocument(result);
-        return;
-      }
-      if (selectedProject) {
-        setMessage("需求文档解析完成，正在从需求原文建立接口来源映射…");
-        const discovered = await api.ingestAndDiscoverRequirement(selectedProject.project_id, result.filename, result.content);
-        const documentOperations = operationsForDocument(discovered.operations, discovered.document.document_id);
-        rememberRequirementDocument(discovered.document);
-        setDocumentText("");
-        setOperations(discovered.operations);
-        setSelectedOperation(null);
-        setSelectedOperationIds([]);
-        setPage("operations");
-        setMessage(`已从需求文档识别 ${documentOperations.length} 个可测试接口。`);
-        setParseSuccess({ filename: discovered.document.filename, documentId: discovered.document.document_id, charCount: discovered.document.char_count, lineCount: discovered.document.line_count, operationCount: documentOperations.length });
-        return;
-      }
-      setParsedDocument(result);
-      setDocumentText("");
-      setPage("documents");
-      setMessage(`已解析“${result.filename}”，共 ${result.char_count.toLocaleString()} 个字符。`);
-      setParseSuccess({ filename: result.filename, documentId: result.document_id, charCount: result.char_count, lineCount: result.line_count });
-    } catch (error) {
-      setDocumentError(error instanceof Error ? error.message : "需求文档解析失败");
-      setMessage("需求文档解析失败，请检查文件格式。");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function importOperationContract() {
-    if (!selectedProject || !parsedDocument || parsedDocument.detected_kind !== "operation_contract") {
-      setMessage("请先选择项目并解析接口契约。");
-      return;
-    }
-    setBusy(true);
-    try {
-      await attachOperationContractDocument(parsedDocument);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "接口契约导入失败");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function createProject() {
     if (!newProjectName.trim() || !newBaseUrl.trim()) return;
