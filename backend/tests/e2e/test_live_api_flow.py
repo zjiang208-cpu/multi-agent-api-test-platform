@@ -23,7 +23,7 @@ def project_payload() -> dict:
         "description": "Black-box acceptance project; removed after the test.",
         "settings": {
             "requirement_sources": [],
-            "openapi_sources": [],
+            "openapi_sources": [str(SAMPLE_OPENAPI)],
             "source_workspace": None,
             "sut_target": {
                 "base_url": SUT_BASE_URL,
@@ -52,7 +52,7 @@ def project_payload() -> dict:
     }
 
 
-def test_live_project_document_and_operation_flow() -> None:
+def test_live_project_and_operation_discovery_flow() -> None:
     assert SAMPLE_OPENAPI.is_file(), f"sample contract not found: {SAMPLE_OPENAPI}"
 
     with httpx.Client(timeout=20, follow_redirects=False) as api_client:
@@ -76,17 +76,12 @@ def test_live_project_document_and_operation_flow() -> None:
         project_id = created.json()["project_id"]
 
         try:
-            contract = SAMPLE_OPENAPI.read_text(encoding="utf-8")
             discovered = api_client.post(
-                f"{API_BASE_URL}/api/projects/{project_id}/requirement-documents/ingest-and-discover",
-                json={
-                    "filename": SAMPLE_OPENAPI.name,
-                    "content": contract,
-                },
+                f"{API_BASE_URL}/api/projects/{project_id}/operations/discover",
+                json={},
             )
             assert discovered.status_code == 200, discovered.text
             body = discovered.json()
-            assert body["document"]["project_id"] == project_id
             assert {item["operation_id"] for item in body["operations"]} == {
                 "get-item",
                 "create-item",
