@@ -13,271 +13,27 @@ import type {
   TestProject,
   WorkflowRunSnapshot,
 } from "./types/api";
+import {
+  assertionTarget,
+  escapeHtml,
+  formatDate,
+  formatDetailValue,
+  isQueueTerminal,
+  methodClass,
+  navGroups,
+  navItems,
+  operationsForDocument,
+  overviewActions,
+  projectEditorFrom,
+  requestPath,
+  sortRequirementDocuments,
+  splitLines,
+  statusText,
+  workflowSteps,
+} from "./app/platform";
+import type { PageKey, ParseSuccessNotice, ProjectEditor } from "./app/platform";
+import { AppShell } from "./components/AppShell";
 import "./styles.css";
-
-type PageKey = "overview" | "documents" | "operations" | "requirements" | "cases" | "execution" | "reports" | "settings";
-type ParseSuccessNotice = { filename: string; documentId: string; charCount: number; lineCount: number; operationCount?: number };
-type ProjectEditor = {
-  name: string;
-  description: string;
-  baseUrl: string;
-  timeoutSeconds: string;
-  verifyTls: boolean;
-  openapiSources: string;
-  sourceWorkspace: string;
-  databaseEnabled: boolean;
-  databaseDialect: string;
-  databaseRef: string;
-  databaseSchema: string;
-  allowedTables: string;
-  authEnabled: boolean;
-  authKind: "http" | "sms";
-  authTtlSeconds: string;
-  authSmsPhoneRef: string;
-  authSmsCodeMethod: string;
-  authSmsCodePath: string;
-  authSmsCodeBodyType: "json" | "form" | "none";
-  authSmsCodeQueryParams: string;
-  authSmsCodeHeaders: string;
-  authSmsCodeBody: string;
-  authSmsCodeSource: "redis" | "json";
-  authSmsCodeExtractPath: string;
-  authSmsRedisHost: string;
-  authSmsRedisPort: string;
-  authSmsRedisPasswordRef: string;
-  authSmsRedisKey: string;
-  authLoginMethod: string;
-  authLoginPath: string;
-  authBodyType: "json" | "form" | "none";
-  authQueryParams: string;
-  authHeaders: string;
-  authBody: string;
-  authCredentialRefs: string;
-  authExtractSource: "json" | "header" | "cookie";
-  authExtractPath: string;
-  authInjectLocation: "header" | "cookie";
-  authInjectName: string;
-  authInjectPrefix: string;
-};
-
-type NavIconName = "overview" | "documents" | "operations" | "requirements" | "cases" | "execution" | "reports" | "settings";
-type NavItem = { key: PageKey; label: string; icon: NavIconName };
-
-const navGroups: Array<{ label: string; items: NavItem[] }> = [
-  { label: "工作台", items: [{ key: "overview", label: "项目概览", icon: "overview" }] },
-  {
-    label: "测试流程",
-    items: [
-      { key: "documents", label: "需求文档", icon: "documents" },
-      { key: "operations", label: "接口目录", icon: "operations" },
-      { key: "requirements", label: "需求分析", icon: "requirements" },
-      { key: "cases", label: "测试用例", icon: "cases" },
-      { key: "execution", label: "执行中心", icon: "execution" },
-      { key: "reports", label: "报告中心", icon: "reports" },
-    ],
-  },
-  { label: "管理", items: [{ key: "settings", label: "项目设置", icon: "settings" }] },
-];
-
-const navItems = navGroups.flatMap((group) => group.items);
-
-const workflowSteps = ["需求文档", "接口选择", "需求确认", "用例设计", "执行确认", "测试执行", "测试报告"];
-
-const overviewActions: Array<{ page: PageKey; label: string; description: string }> = [
-  { page: "documents", label: "上传需求文档", description: "上传或粘贴 Markdown 需求，识别其中的接口与业务规则。" },
-  { page: "operations", label: "选择待测接口", description: "从已识别的接口中选择一个，进入顺序分析流程。" },
-  { page: "requirements", label: "确认接口需求", description: "检查提取的业务规则、测试点与辅助证据。" },
-  { page: "cases", label: "查看用例设计", description: "查看当前接口生成并经过语义审查的测试用例。" },
-  { page: "execution", label: "确认执行范围", description: "确认目标环境、用例数量以及可能产生的副作用。" },
-  { page: "execution", label: "查看测试执行", description: "查看已批准批次的执行状态与 HTTP 响应。" },
-  { page: "reports", label: "查看测试报告", description: "查看执行结果、断言详情并导出 HTML 报告。" },
-];
-
-function NavIcon({ name }: { name: NavIconName }) {
-  const commonProps = {
-    className: "nav-icon",
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: 1.8,
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-    "aria-hidden": true,
-    focusable: false,
-  };
-
-  switch (name) {
-    case "overview":
-      return <svg {...commonProps}><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></svg>;
-    case "documents":
-      return <svg {...commonProps}><path d="M6 3.5h8l4 4V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z" /><path d="M14 3.5V8h4M8 12h6M8 16h8" /></svg>;
-    case "operations":
-      return <svg {...commonProps}><circle cx="5" cy="6" r="2" /><circle cx="19" cy="6" r="2" /><circle cx="12" cy="18" r="2" /><path d="M7 6h10M6.5 7.5l4.3 8.7M17.5 7.5l-4.3 8.7" /></svg>;
-    case "requirements":
-      return <svg {...commonProps}><path d="m4 6 1.5 1.5L8.5 4.5M11 6h9M4 12l1.5 1.5 3-3M11 12h9M4 18l1.5 1.5 3-3M11 18h9" /></svg>;
-    case "cases":
-      return <svg {...commonProps}><path d="M9 5h6M9 3h6v4H9z" /><path d="M7 5H5.5A1.5 1.5 0 0 0 4 6.5v13A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5v-13A1.5 1.5 0 0 0 18.5 5H17" /><path d="m8 14 2.5 2.5L16 11" /></svg>;
-    case "execution":
-      return <svg {...commonProps}><circle cx="12" cy="12" r="9" /><path d="m10 8 6 4-6 4Z" /></svg>;
-    case "reports":
-      return <svg {...commonProps}><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></svg>;
-    case "settings":
-      return <svg {...commonProps}><path d="M4 6h8M16 6h4M4 12h3M11 12h9M4 18h10M18 18h2" /><circle cx="14" cy="6" r="2" /><circle cx="9" cy="12" r="2" /><circle cx="16" cy="18" r="2" /></svg>;
-  }
-}
-
-function BrandMark() {
-  return <svg className="brand-symbol" viewBox="0 0 40 40" fill="none" aria-hidden="true" focusable="false"><circle cx="10" cy="12" r="3" /><circle cx="30" cy="10" r="3" /><circle cx="29" cy="29" r="3" /><path d="M13 12h7c5 0 7-2 7-2M12 15l13 11M29 13v13" /></svg>;
-}
-
-function splitLines(value: string): string[] {
-  return value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
-}
-
-function projectEditorFrom(project: TestProject): ProjectEditor {
-  const authProvider = project.settings.auth_provider;
-  const authInject = authProvider?.inject;
-  const authLogin = authProvider?.kind === "sms"
-    ? authProvider.sms?.login
-    : authProvider?.login;
-  return {
-    name: project.name,
-    description: project.description,
-    baseUrl: project.settings.sut_target.base_url,
-    timeoutSeconds: String(project.settings.sut_target.timeout_seconds),
-    verifyTls: project.settings.sut_target.verify_tls,
-    openapiSources: project.settings.openapi_sources.join("\n"),
-    sourceWorkspace: project.settings.source_workspace ?? "",
-    databaseEnabled: project.settings.database.enabled,
-    databaseDialect: project.settings.database.dialect ?? "mysql",
-    databaseRef: project.settings.database.dsn_ref ?? "",
-    databaseSchema: project.settings.database.schema ?? "",
-    allowedTables: (project.settings.database.allowed_tables ?? []).join("\n"),
-    authEnabled: authProvider?.enabled ?? false,
-    authKind: authProvider?.kind ?? "http",
-    authTtlSeconds: String(authProvider?.token_ttl_seconds ?? 1800),
-    authSmsPhoneRef: authProvider?.sms?.phone_ref ?? "env:TEST_LOGIN_PHONE",
-    authSmsCodeMethod: authProvider?.sms?.code_request?.method ?? "POST",
-    authSmsCodePath: authProvider?.sms?.code_request?.path ?? "/auth/sms/code",
-    authSmsCodeBodyType: authProvider?.sms?.code_request?.body_type ?? "none",
-    authSmsCodeQueryParams: JSON.stringify(authProvider?.sms?.code_request?.query_params ?? { phone: "{{phone}}" }, null, 2),
-    authSmsCodeHeaders: JSON.stringify(authProvider?.sms?.code_request?.headers ?? {}, null, 2),
-    authSmsCodeBody: authProvider?.sms?.code_request?.body == null ? "" : JSON.stringify(authProvider.sms.code_request.body, null, 2),
-    authSmsCodeSource: authProvider?.sms?.code_source ?? "redis",
-    authSmsCodeExtractPath: authProvider?.sms?.code_path ?? "login:code:{{phone}}",
-    authSmsRedisHost: authProvider?.sms?.redis_host ?? "127.0.0.1",
-    authSmsRedisPort: String(authProvider?.sms?.redis_port ?? 6379),
-    authSmsRedisPasswordRef: authProvider?.sms?.redis_password_ref ?? "",
-    authSmsRedisKey: authProvider?.sms?.code_path ?? "login:code:{{phone}}",
-    authLoginMethod: authLogin?.method ?? "POST",
-    authLoginPath: authLogin?.path ?? "",
-    authBodyType: authLogin?.body_type ?? "json",
-    authQueryParams: JSON.stringify(authLogin?.query_params ?? {}, null, 2),
-    authHeaders: JSON.stringify(authLogin?.headers ?? {}, null, 2),
-    authBody: authLogin?.body == null ? "" : JSON.stringify(authLogin.body, null, 2),
-    authCredentialRefs: JSON.stringify(authLogin?.credential_refs ?? {}, null, 2),
-    authExtractSource: authProvider?.extract?.source ?? "json",
-    authExtractPath: authProvider?.extract?.path ?? "$.data",
-    authInjectLocation: authInject?.location ?? "header",
-    authInjectName: authInject?.name ?? "Authorization",
-    authInjectPrefix: authInject ? (authInject.prefix ?? "") : "Bearer",
-  };
-}
-
-function statusText(status: string): string {
-  const labels: Record<string, string> = {
-    FINAL_CASES_READY: "用例已就绪",
-    NEEDS_CLARIFICATION: "需要补充信息",
-    REQUIREMENT_READY: "需求已生成",
-    WAITING_REQUIREMENT_APPROVAL: "等待需求确认",
-    DESIGNING: "用例设计中",
-    REVIEWING: "完整性检查中",
-    DRAFT_CASES_READY: "草稿已生成",
-    EVIDENCE_RETRIEVED: "证据已收集",
-    DOCUMENT_PARSED: "文档已解析",
-    FAILED: "流程失败",
-    PENDING: "等待处理",
-    RUNNING: "处理中",
-    READY_FOR_EXECUTION: "待执行确认",
-    READY_WITH_SKIPS: "部分接口已跳过",
-    BLOCKED: "需要人工处理",
-    SKIPPED: "已跳过",
-    COMPLETED: "已完成",
-    NLU: "需求分析",
-    DESIGNER: "用例设计",
-    REVIEWER: "完整性检查",
-    passed: "PASS",
-    failed: "FAIL",
-    mixed: "部分通过",
-    error: "执行错误",
-  };
-  return labels[status] ?? status;
-}
-
-function isQueueTerminal(status: string): boolean {
-  return ["READY_FOR_EXECUTION", "READY_WITH_SKIPS", "SKIPPED", "CANCELLED"].includes(status);
-}
-
-function methodClass(method: string): string {
-  return `method method-${method.toLowerCase()}`;
-}
-
-function formatDate(value?: string): string {
-  if (!value) return "—";
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
-}
-
-function formatDetailValue(value: unknown): string {
-  if (value === undefined) return "未记录";
-  if (value === null) return "null";
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function escapeHtml(value: unknown): string {
-  return formatDetailValue(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function requestPath(value: string): string {
-  try {
-    const url = new URL(value);
-    return `${url.pathname}${url.search}`;
-  } catch {
-    return value;
-  }
-}
-
-function assertionTarget(type?: string | null, path?: string | null): string {
-  if (path) return path;
-  if (type === "status_code") return "HTTP 状态码";
-  if (type === "response_time_ms") return "响应时间（ms）";
-  if (type === "response_schema") return "响应 Body Schema";
-  return "旧报告未记录字段路径";
-}
-
-function sortRequirementDocuments(documents: ParsedRequirementDocument[]): ParsedRequirementDocument[] {
-  return [...documents].sort((left, right) => {
-    const leftTime = Date.parse(left.updated_at ?? left.created_at ?? "") || 0;
-    const rightTime = Date.parse(right.updated_at ?? right.created_at ?? "") || 0;
-    return rightTime - leftTime;
-  });
-}
-
-function operationsForDocument(operations: OperationContract[], documentId: string): OperationContract[] {
-  return operations.filter((operation) =>
-    operation.source_document_id === documentId
-    || operation.source_refs?.some((source) => source.source_document_id === documentId),
-  );
-}
 
 export default function App() {
   const [projects, setProjects] = useState<TestProject[]>([]);
@@ -1409,10 +1165,6 @@ ${resultSections}</main></body></html>`;
     </section>;
   }
 
-  function renderDocumentsLegacy() {
-    return <><div className="page-heading"><div><span className="kicker">开始测试</span><h2>需求文档解析</h2><p>上传面向接口的需求文档，平台会提取业务规则、接口行为和异常场景。源码与数据库仅作为可选辅助证据。</p></div><span className="status-badge status-ready">独立入口</span></div><div className="document-layout"><section className="card document-input-card"><div className="card-heading"><div><span className="kicker">输入文档</span><h3>上传文件或粘贴内容</h3></div><span className="help-text">单文件最大 10 MB</span></div><label className="document-drop"><input type="file" accept=".pdf,.docx,.md,.markdown,.txt,.rst,.html,.htm,.json,.yaml,.yml" onChange={(event) => { const file = event.target.files?.[0]; if (file) void parseFileDocument(file); }} /><span className="drop-title">选择需求文档文件</span><span className="drop-copy">PDF · DOCX · Markdown · TXT · HTML · JSON · YAML</span></label><div className="document-divider"><span>或直接粘贴</span></div><label className="document-name">文档名称<input value={documentName} onChange={(event) => setDocumentName(event.target.value)} placeholder="例如：店铺详情接口需求.md" /></label><textarea className="document-textarea" value={documentText} onChange={(event) => { setDocumentText(event.target.value); if (parsedDocument) { resetRequirementContext(); setMessage("需求文档已修改，请重新解析；旧接口和旧分析结果已清空。"); } }} placeholder="粘贴需求背景、业务规则、接口行为、异常场景等内容…" maxLength={500000} /><div className="document-footer"><span>{documentText.length.toLocaleString()} / 500,000 字符</span><button className="button button-primary" onClick={parseTextDocument} disabled={busy || !documentText.trim()}>{busy ? "解析中…" : "解析需求文档"}</button></div>{documentError && <div className="callout callout-danger">{documentError}</div>}</section><section className="document-side"><section className="card"><div className="card-heading"><div><span className="kicker">解析能力</span><h3>支持的文档格式</h3></div></div><div className="format-list"><span>PDF</span><span>DOCX</span><span>Markdown</span><span>TXT</span><span>HTML</span><span>JSON</span><span>YAML</span></div><p className="card-copy">解析服务会统一提取可读文本、章节标题、行号和文档摘要，后续步骤使用规范化内容，不直接依赖原始文件扩展名。若检测到接口契约，会引导你导入接口目录。</p></section><section className="card"><div className="card-heading"><div><span className="kicker">后续流程</span><h3>解析完成后继续</h3></div></div><div className="document-context"><div><span>当前项目</span><strong>{selectedProject?.name ?? "尚未选择项目"}</strong></div><div><span>当前接口</span><strong>{selectedOperation ? `${selectedOperation.method} ${selectedOperation.path}` : "尚未选择接口"}</strong></div></div>{!selectedProject && <p className="context-hint">需求文档解析不依赖项目；开始测试分析前，请先创建或选择项目。</p>}{!selectedOperationIds.length && <button className="button button-secondary full-button" onClick={() => setPage("operations")}>去接口目录选择接口</button>}{parsedDocument?.detected_kind === "operation_contract" && selectedProject && <button className="button button-primary full-button" onClick={() => void importOperationContract()} disabled={busy}>{busy ? "导入中…" : "导入到当前项目接口目录"}</button>}{parsedDocument?.detected_kind !== "operation_contract" && parsedDocument && selectedProject && selectedOperationIds.length > 0 && <button className="button button-primary full-button" onClick={() => void runWorkflow()} disabled={busy}>{busy ? "分析中…" : `开始顺序分析（${selectedOperationIds.length} 个接口）`}</button>}</section></section></div>{parsedDocument && <section className="card parsed-document-card"><div className="card-heading"><div><span className="kicker">解析结果</span><h3>{parsedDocument.filename}</h3></div><span className={`status-badge ${parsedDocument.detected_kind === "operation_contract" ? "status-warning" : "status-ready"}`}>{parsedDocument.detected_kind === "operation_contract" ? "接口契约" : "解析成功"}</span></div>{parsedDocument.detected_kind === "operation_contract" && <div className="callout callout-info"><strong>输入类型已识别</strong><p>这个文件描述 API 接口（请求方法、路径、请求和响应），不是业务需求文档。选择项目后可直接导入接口目录；业务需求请另行上传。</p>{selectedProject && <button className="button button-small button-secondary" onClick={() => void importOperationContract()} disabled={busy}>导入当前项目</button>}</div>}<div className="parsed-meta"><div><span>格式</span><strong>{parsedDocument.format.toUpperCase()}</strong></div><div><span>字符数</span><strong>{parsedDocument.char_count.toLocaleString()}</strong></div><div><span>行数</span><strong>{parsedDocument.line_count.toLocaleString()}</strong></div><div><span>章节</span><strong>{parsedDocument.sections.length}</strong></div><div><span>文档编号</span><code>{parsedDocument.document_id}</code></div></div>{parsedDocument.warnings.filter((warning) => !warning.includes("检测到这是 API 接口契约")).map((warning) => <div className="callout callout-warning" key={warning}>{warning}</div>)}<details className="parsed-preview"><summary>查看规范化文本</summary><pre>{parsedDocument.content.slice(0, 12000)}{parsedDocument.content.length > 12000 ? "\n…（预览已截断）" : ""}</pre></details></section>}</>;
-  }
-
   function renderDocuments() {
     return <>
       <div className="page-heading">
@@ -1782,41 +1534,20 @@ ${resultSections}</main></body></html>`;
     return <>{content}{parseSuccess && <div className="modal-backdrop" role="presentation" onClick={() => setParseSuccess(null)}><section className="success-modal" role="dialog" aria-modal="true" aria-labelledby="parse-success-title" onClick={(event) => event.stopPropagation()}><button className="modal-close" aria-label="关闭" onClick={() => setParseSuccess(null)}>×</button><div className="success-icon">✓</div><span className="kicker">文档解析</span><h2 id="parse-success-title">需求文档解析成功</h2><p className="success-modal-copy">“{parseSuccess.filename}”已完成解析，后续流程将使用这份规范化需求文档。</p><div className="success-modal-facts"><div><span>字符数</span><strong>{parseSuccess.charCount.toLocaleString()}</strong></div><div><span>行数</span><strong>{parseSuccess.lineCount.toLocaleString()}</strong></div><div><span>文档编号</span><code title={parseSuccess.documentId}>{parseSuccess.documentId}</code></div></div>{parseSuccess.operationCount !== undefined && <p className="success-modal-hint">已从需求原文识别 {parseSuccess.operationCount} 个可测试接口，请在接口目录选择需要分析的接口。</p>}<div className="modal-actions"><button className="button button-primary" onClick={() => setParseSuccess(null)}>继续查看</button>{parseSuccess.operationCount !== undefined && <button className="button button-secondary" onClick={() => { setParseSuccess(null); setPage("operations"); }}>查看接口目录</button>}</div></section></div>}{saveSuccess && <div className="modal-backdrop" role="presentation" onClick={() => setSaveSuccess(null)}><section className="success-modal" role="dialog" aria-modal="true" aria-labelledby="save-success-title" onClick={(event) => event.stopPropagation()}><button className="modal-close" aria-label="关闭" onClick={() => setSaveSuccess(null)}>×</button><div className="success-icon">{saveSuccess.authSuccess ? "✓" : "!"}</div><span className="kicker">项目设置</span><h2 id="save-success-title">{saveSuccess.authSuccess ? "保存成功" : "已保存，但鉴权预检失败"}</h2><p className="success-modal-copy">项目“{saveSuccess.name}”的配置已保存，刷新页面后仍会保留。</p><p className={`success-modal-hint ${saveSuccess.authSuccess ? "" : "save-auth-failed"}`}>{saveSuccess.authMessage}</p><div className="modal-actions"><button className="button button-primary" onClick={() => setSaveSuccess(null)}>知道了</button></div></section></div>}</>;
   }
 
-  return <div className="app-shell">
-    <a className="skip-link" href="#main-content">跳到主要内容</a>
-    <aside className="sidebar">
-      <div className="brand">
-        <div className="brand-mark"><BrandMark /></div>
-        <div><strong>接口测试工作台</strong><span>Multi-Agent workflow</span></div>
-      </div>
-      <div className="sidebar-section project-section">
-        <span className="sidebar-label">当前项目</span>
-        {projects.length
-          ? <select aria-label="当前项目" value={selectedProject?.project_id ?? ""} onChange={(event) => { const project = projects.find((item) => item.project_id === event.target.value); if (project) selectProject(project); }}><option value="" disabled>选择项目</option>{projects.map((project) => <option value={project.project_id} key={project.project_id}>{project.name}</option>)}</select>
-          : <button className="sidebar-create" onClick={() => setShowCreateForm(true)}>+ 创建测试项目</button>}
-      </div>
-      <nav className="main-nav" aria-label="主导航">
-        {navGroups.map((group) => <div className="nav-group" key={group.label}>
-          <span className="nav-group-label">{group.label}</span>
-          {group.items.map((item) => <button key={item.key} className={`nav-item ${page === item.key ? "active" : ""}`} aria-current={page === item.key ? "page" : undefined} onClick={() => setPage(item.key)}><NavIcon name={item.icon} /><span>{item.label}</span></button>)}
-        </div>)}
-      </nav>
-    </aside>
-    <div className="main-area">
-      <header className="topbar">
-        <div><span className="breadcrumb">{selectedProject?.name ?? "接口测试工作台"} / {activeNav.label}</span><h1>{activeNav.label}</h1></div>
-      </header>
-      <main className="content" id="main-content">
-        <section className="workflow-progress" aria-label="测试任务进度">
-          <div className="progress-caption">
-            <div><span className="kicker">测试任务进度</span><strong>{workflowSteps[currentStep]}</strong></div>
-            <span>第 {Math.min(currentStep + 1, workflowSteps.length)} / {workflowSteps.length} 阶段</span>
-          </div>
-          <ol className="stepper">{workflowSteps.map((step, index) => <li className={`step ${index < currentStep ? "complete" : ""} ${index === currentStep ? "current" : ""}`} aria-current={index === currentStep ? "step" : undefined} key={step}><span className="step-number">{index < currentStep ? "✓" : index + 1}</span><span>{step}</span></li>)}</ol>
-        </section>
-        <div className={`global-notice ${busy ? "is-busy" : ""}`} role="status" aria-live="polite" aria-atomic="true"><span className="notice-indicator" />{message}</div>
-        {renderPage()}
-      </main>
-    </div>
-  </div>;
+  return (
+    <AppShell
+      projects={projects}
+      selectedProject={selectedProject}
+      page={page}
+      activeNav={activeNav}
+      currentStep={currentStep}
+      message={message}
+      busy={busy}
+      onSelectProject={selectProject}
+      onCreateProject={() => setShowCreateForm(true)}
+      onNavigate={setPage}
+    >
+      {renderPage()}
+    </AppShell>
+  );
 }
