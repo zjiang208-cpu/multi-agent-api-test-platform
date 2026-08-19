@@ -189,6 +189,11 @@ cd backend
 # 查看覆盖率并生成 HTML 报告
 .\.venv\Scripts\python.exe -m pytest --cov=app --cov-report=term-missing --cov-report=html
 
+# 黑盒验收：需要先启动后端和仓库内示例 SUT
+$env:E2E_API_BASE_URL = "http://127.0.0.1:8000"
+$env:E2E_SUT_BASE_URL = "http://127.0.0.1:18281"
+.\.venv\Scripts\python.exe -m pytest -m e2e
+
 cd ..\frontend
 npm run build
 ```

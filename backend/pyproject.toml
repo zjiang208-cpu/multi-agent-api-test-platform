@@ -41,8 +41,11 @@ where = ["."]
 [tool.pytest.ini_options]
 pythonpath = [".", ".."]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not e2e'"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "e2e: black-box acceptance tests requiring a running API and sample SUT",
+]
 
 [tool.coverage.run]
 branch = true
