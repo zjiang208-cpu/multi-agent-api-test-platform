@@ -639,8 +639,8 @@ export default function App() {
       setMessage("该接口已经生成测试用例，可以在“测试用例”页面查看。");
       return;
     }
-    // Keep accumulated cases, but clear the previous API's transient queue,
-    // approval and report state before starting another API.
+    // 保留已累计生成的用例，但开始新接口前清理上一个接口的临时队列、
+    // 执行许可和报告状态。
     setQueue(null);
     setWorkflow(null);
     setApproval(null);
