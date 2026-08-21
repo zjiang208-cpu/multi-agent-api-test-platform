@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -128,6 +129,96 @@ def _sample() -> EvalSample:
             ],
         ),
         reviewer_output=GeneratedReviewerOutput(),
+    )
+
+
+def _reviewer_mutation_sample() -> EvalSample:
+    """提供 Reviewer Mutation 单元测试所需的最小合成样本。"""
+
+    return EvalSample(
+        sample_id="get-shop-id-ci-fixture",
+        operation_id="get-shop-id",
+        test_points=[
+            GeneratedPoint(point_id="tp-get-shop-id-001", title="查询成功"),
+            GeneratedPoint(point_id="tp-get-shop-id-002", title="参数无效"),
+            GeneratedPoint(point_id="tp-get-shop-id-006", title="资源不存在"),
+        ],
+        cases=[
+            GeneratedCase(
+                case_id="CASE-GET-SHOP-001",
+                test_point_ids=["tp-get-shop-id-001"],
+                assertions=[
+                    GeneratedAssertion(
+                        assertion_id="ASSERT-GET-SHOP-001-STATUS",
+                        type="status_code",
+                        expected=200,
+                    )
+                ],
+                request={
+                    "method": "GET",
+                    "path": "/shop/{id}",
+                    "path_params": {"id": 1},
+                },
+                executable=True,
+            ),
+            GeneratedCase(
+                case_id="CASE-GET-SHOP-002",
+                test_point_ids=["tp-get-shop-id-002"],
+                assertions=[
+                    GeneratedAssertion(
+                        assertion_id="ASSERT-GET-SHOP-002-ERRORMSG",
+                        type="json_value",
+                        path="$.errorMsg",
+                        operator="eq",
+                        expected="shop id is invalid",
+                    )
+                ],
+                request={
+                    "method": "GET",
+                    "path": "/shop/{id}",
+                    "path_params": {"id": 0},
+                },
+                executable=True,
+            ),
+            GeneratedCase(
+                case_id="CASE-GET-SHOP-006",
+                test_point_ids=["tp-get-shop-id-006"],
+                assertions=[
+                    GeneratedAssertion(
+                        assertion_id="ASSERT-GET-SHOP-006-STATUS",
+                        type="status_code",
+                        expected=200,
+                    )
+                ],
+                request={
+                    "method": "GET",
+                    "path": "/shop/{id}",
+                    "path_params": {"id": 999999},
+                },
+                executable=True,
+            ),
+        ],
+        metadata={
+            "prompt_version": "synthetic-ci-fixture",
+            "llm_nlu_call_1_attempt": "1",
+            "llm_nlu_call_1_mode": "generate",
+            "llm_nlu_call_1_status": "success",
+            "llm_nlu_call_2_attempt": "2",
+            "llm_nlu_call_2_mode": "regenerate",
+            "llm_nlu_call_2_status": "success",
+            "llm_nlu_duration_ms": "34045",
+            "llm_designer_call_1_attempt": "1",
+            "llm_designer_call_1_mode": "generate",
+            "llm_designer_call_1_status": "success",
+            "llm_designer_call_2_attempt": "2",
+            "llm_designer_call_2_mode": "regenerate",
+            "llm_designer_call_2_status": "success",
+            "llm_designer_duration_ms": "36308",
+            "llm_reviewer_call_1_attempt": "1",
+            "llm_reviewer_call_1_mode": "generate",
+            "llm_reviewer_call_1_status": "success",
+            "llm_reviewer_duration_ms": "77595",
+        },
     )
 
 
@@ -475,11 +566,16 @@ def test_workflow_snapshot_adapter_preserves_evidence_and_telemetry():
 
 
 def test_direct_eval_samples_hydrate_telemetry_from_metadata():
-    project_root = Path(__file__).resolve().parents[2]
-    samples, _ = load_samples(
-        project_root / "evals/datasets/baseline_v1/samples/get-shop-id-current-fixed-redacted.json",
-        require_redacted=True,
-    )
+    with tempfile.TemporaryDirectory(dir=Path.cwd(), prefix=".eval-sample-test-") as temp_dir:
+        sample_path = Path(temp_dir) / "synthetic-eval-sample.json"
+        sample_path.write_text(
+            json.dumps(
+                {"samples": [_reviewer_mutation_sample().model_dump(mode="json")]},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        samples, _ = load_samples(sample_path, require_redacted=True)
 
     assert len(samples) == 1
     assert len(samples[0].telemetry) == 5
@@ -488,10 +584,7 @@ def test_direct_eval_samples_hydrate_telemetry_from_metadata():
 
 def test_reviewer_mutation_plan_builds_four_pending_samples():
     project_root = Path(__file__).resolve().parents[2]
-    samples, _ = load_samples(
-        project_root / "evals/datasets/baseline_v1/samples/get-shop-id-current-fixed-redacted.json",
-        require_redacted=True,
-    )
+    samples = [_reviewer_mutation_sample()]
     import yaml
 
     plan = yaml.safe_load(
