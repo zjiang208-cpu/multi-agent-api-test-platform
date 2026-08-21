@@ -96,6 +96,16 @@ def test_structured_parser_exposes_bounded_schema_repair_context():
     assert "must-not-persist" not in str(error)
 
 
+def test_reviewer_parser_discards_deepseek_compatibility_note():
+    parsed = StructuredOutputParser.parse(
+        '{"missing_test_point_ids": [], "unresolved_questions_note": null}',
+        ReviewerAgentOutput,
+    )
+
+    assert parsed.missing_test_point_ids == []
+    assert "unresolved_questions_note" not in parsed.model_dump()
+
+
 def test_one_pass_reviewer_reports_omissions_without_scoring_or_repair():
     requirement = RequirementDocument(
         requirement_id="REQ-1",

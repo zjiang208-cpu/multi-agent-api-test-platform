@@ -13,10 +13,69 @@ class RequirementRulesMixin:
 
     @staticmethod
     def _operation_requirement_excerpt(operation, document: str) -> str:
-        """Return only the current operation's requirement section."""
+        """Return the current operation document section without dropping sibling rules.
+
+        Discovery source ranges often point at the operation's basic-info table only.
+        For markdown documents that group parameters, response rules, and failure
+        scenarios under one top-level API heading, returning that narrow range loses
+        observable response requirements before NLU sees them.
+        """
 
         lines = document.splitlines()
         line_count = len(lines)
+
+        def heading_level(line: str) -> int | None:
+            match = re.match(r"^\s*(#+)\s+", line)
+            return len(match.group(1)) if match else None
+
+        def document_section_excerpt(anchor_index: int) -> str:
+            top_start = 0
+            for candidate in range(anchor_index, -1, -1):
+                if heading_level(lines[candidate]) == 1:
+                    top_start = candidate
+                    break
+            top_end = line_count
+            for candidate in range(top_start + 1, line_count):
+                if heading_level(lines[candidate]) == 1:
+                    top_end = candidate
+                    break
+
+            # A generic top-level heading may contain several operations. In
+            # that case isolate the nearest operation subsection; otherwise a
+            # top-level heading such as "Get item" owns all of its child rules.
+            top_title = lines[top_start].lstrip("#").strip().casefold()
+            generic_top_level = any(
+                marker in top_title
+                for marker in ("api", "rule", "接口", "需求", "文档", "document")
+            )
+            path_hits = [
+                candidate
+                for candidate in range(top_start, top_end)
+                if re.search(re.escape(operation.path), lines[candidate], re.IGNORECASE)
+            ]
+            if len(path_hits) <= 1 and not generic_top_level:
+                return "\n".join(lines[top_start:top_end]).strip()[:9_000]
+
+            selected_anchor = min(
+                path_hits or [anchor_index],
+                key=lambda candidate: abs(candidate - anchor_index),
+            )
+            start = top_start
+            section_level = 1
+            for candidate in range(selected_anchor, top_start - 1, -1):
+                level = heading_level(lines[candidate])
+                if level is not None and level > 1:
+                    start = candidate
+                    section_level = level
+                    break
+            end = top_end
+            for candidate in range(start + 1, top_end):
+                level = heading_level(lines[candidate])
+                if level is not None and level <= section_level:
+                    end = candidate
+                    break
+            return "\n".join(lines[start:end]).strip()[:9_000]
+
         for source in operation.source_refs:
             if source.source_document_id and source.source_document_id != operation.source_document_id:
                 continue
@@ -25,34 +84,21 @@ class RequirementRulesMixin:
             reference = source.reference or ""
             has_specific_range = ":lines:" in reference or start > 1 or end < line_count
             if has_specific_range and 1 <= start <= end <= line_count:
-                return "\n".join(lines[start - 1 : end]).strip()[:9_000]
+                return document_section_excerpt(start - 1)
 
         method = re.escape(operation.method)
         path = re.escape(operation.path)
         path_pattern = rf"{path}(?![A-Za-z0-9_/{{])"
         exact_line = re.compile(rf"(?i)\b{method}\b.*{path_pattern}|{path_pattern}.*\b{method}\b")
 
-        def section_excerpt(anchor_index: int) -> str:
-            start = max(0, anchor_index - 12)
-            for candidate in range(anchor_index - 1, max(-1, anchor_index - 80), -1):
-                if lines[candidate].lstrip().startswith("#"):
-                    start = candidate
-                    break
-            end = min(line_count, anchor_index + 80)
-            for candidate in range(anchor_index + 1, min(line_count, anchor_index + 160)):
-                if lines[candidate].lstrip().startswith("#"):
-                    end = candidate
-                    break
-            return "\n".join(lines[start:end]).strip()[:9_000]
-
         for index, line in enumerate(lines):
             if exact_line.search(line):
-                return section_excerpt(index)
+                return document_section_excerpt(index)
 
         path_only = re.compile(path_pattern, re.IGNORECASE)
         for index, line in enumerate(lines):
             if path_only.search(line):
-                return section_excerpt(index)
+                return document_section_excerpt(index)
 
         for source in operation.source_refs:
             if source.source_text and operation.path in source.source_text:

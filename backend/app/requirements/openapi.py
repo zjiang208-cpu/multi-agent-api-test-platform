@@ -155,7 +155,15 @@ class OpenApiLoader:
                     enum=schema.get("enum", value.get("enum")),
                     constraints={
                         key: schema[key]
-                        for key in ("minimum", "maximum", "minLength", "maxLength", "pattern")
+                        for key in (
+                            "minimum",
+                            "maximum",
+                            "exclusiveMinimum",
+                            "exclusiveMaximum",
+                            "minLength",
+                            "maxLength",
+                            "pattern",
+                        )
                         if key in schema
                     },
                 )

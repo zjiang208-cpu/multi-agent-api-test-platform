@@ -149,14 +149,60 @@ def test_failed_designer_retry_reuses_persisted_nlu_snapshot(tmp_path):
     assert persisted.metadata["nlu_cache_reused"] == "true"
 
 
-def test_clarification_is_persisted_as_blocked_instead_of_generic_failure(tmp_path, monkeypatch):
-    project_id = "project-blocked"
-    run_id = "queue-blocked"
-    workflow_id = "workflow-blocked"
+def test_single_item_skipped_designer_retry_reuses_persisted_nlu_snapshot(tmp_path):
+    project_id = "project-skipped-cached-retry"
+    run_id = "queue-skipped-cached-retry"
+    workflow_id = "workflow-skipped-cached-retry"
     queue = ApiProcessingQueue(
         run_id=run_id,
         project_id=project_id,
-        source_document_id="reqdoc-blocked",
+        source_document_id="reqdoc-cached",
+        selected_api_ids=["get-item"],
+        status="SKIPPED",
+        current_index=1,
+        items=[
+            ApiProcessingItem(
+                api_operation_id="get-item",
+                order=1,
+                status="SKIPPED",
+                current_stage="DESIGNER",
+                workflow_id=workflow_id,
+                requirement_id="REQ-ITEM",
+                requirement_version=1,
+                error_message="designer validation failed",
+            )
+        ],
+    )
+    snapshot = _cached_nlu_snapshot(project_id, workflow_id)
+    QueueStore(tmp_path, project_id).save(queue)
+    WorkflowStore(tmp_path, project_id).save_run(snapshot)
+    service = SequentialQueueService(
+        SimpleNamespace(get=lambda requested_project_id: object()),
+        tmp_path,
+        None,
+    )
+
+    retried_queue, retried_snapshot = service.prepare_cached_design_retry(
+        project_id,
+        run_id,
+    )
+
+    assert retried_queue.status == "RUNNING"
+    assert retried_queue.current_index == 0
+    assert retried_queue.items[0].status == "DESIGNING"
+    assert retried_queue.items[0].current_stage == "DESIGNER"
+    assert retried_snapshot.status == "DESIGNING"
+    assert retried_snapshot.metadata["nlu_cache_reused"] == "true"
+
+
+def test_incomplete_coverage_remains_ready_for_execution(tmp_path, monkeypatch):
+    project_id = "project-partial"
+    run_id = "queue-partial"
+    workflow_id = "workflow-partial"
+    queue = ApiProcessingQueue(
+        run_id=run_id,
+        project_id=project_id,
+        source_document_id="reqdoc-partial",
         selected_api_ids=["get-item"],
         status="RUNNING",
         items=[
@@ -173,20 +219,30 @@ def test_clarification_is_persisted_as_blocked_instead_of_generic_failure(tmp_pa
     )
     QueueStore(tmp_path, project_id).save(queue)
     final_cases = FinalCaseSet(
-        final_case_set_id="final-blocked",
+        final_case_set_id="final-partial",
         requirement_id="REQ-ITEM",
         requirement_fingerprint="fingerprint",
-        source_document_id="reqdoc-blocked",
+        source_document_id="reqdoc-partial",
         api_operation_id="get-item",
-        status="NEEDS_CLARIFICATION",
-        assembly_errors=["reviewer found an invalid case"],
+        status="READY",
+        remaining_gaps=["TP-UNRESOLVED is not covered by the generated cases"],
     )
     snapshot = WorkflowRunSnapshot(
         workflow_id=workflow_id,
         project_id=project_id,
         operation_id="get-item",
-        source_document_id="reqdoc-blocked",
-        status="NEEDS_CLARIFICATION",
+        source_document_id="reqdoc-partial",
+        status="FINAL_CASES_READY",
+        requirement=RequirementDocument(
+            requirement_id="REQ-ITEM",
+            source_document_id="reqdoc-partial",
+            api=OperationContract(
+                operation_id="get-item",
+                method="GET",
+                path="/items",
+                responses=[{"status_code": 200}],
+            ),
+        ),
         final_cases=final_cases,
     )
     queue_service = SequentialQueueService(None, tmp_path, None)
@@ -197,19 +253,19 @@ def test_clarification_is_persisted_as_blocked_instead_of_generic_failure(tmp_pa
         lambda: _ClarificationWorkflow(snapshot),
     )
 
-    blocked_queue, returned_snapshot = queue_service.continue_current_after_approval(
+    ready_queue, returned_snapshot = queue_service.continue_current_after_approval(
         project_id,
         run_id,
     )
 
     assert returned_snapshot is snapshot
-    assert blocked_queue.status == "BLOCKED"
-    assert blocked_queue.items[0].status == "BLOCKED"
-    assert blocked_queue.items[0].current_stage == "REVIEWER"
-    assert blocked_queue.items[0].final_case_set_id == "final-blocked"
-    assert "invalid case" in (blocked_queue.items[0].error_message or "")
+    assert ready_queue.status == "READY_FOR_EXECUTION"
+    assert ready_queue.items[0].status == "COMPLETED"
+    assert ready_queue.items[0].current_stage == "COMPLETED"
+    assert ready_queue.items[0].final_case_set_id == "final-partial"
+    assert ready_queue.items[0].error_message is None
     persisted = QueueStore(tmp_path, project_id).get(run_id)
-    assert persisted.status == "BLOCKED"
+    assert persisted.status == "READY_FOR_EXECUTION"
 
 
 def test_ready_final_cases_without_requirement_are_rejected_as_invalid_snapshot(tmp_path, monkeypatch):
@@ -257,20 +313,20 @@ def test_ready_final_cases_without_requirement_are_rejected_as_invalid_snapshot(
     assert persisted.items[0].status == "FAILED"
 
 
-def test_blocked_queue_can_restart_from_fresh_nlu_snapshot(tmp_path, monkeypatch):
-    project_id = "project-blocked-retry"
-    run_id = "queue-blocked-retry"
+def test_failed_queue_can_restart_from_fresh_nlu_snapshot(tmp_path, monkeypatch):
+    project_id = "project-failed-retry"
+    run_id = "queue-failed-retry"
     queue = ApiProcessingQueue(
         run_id=run_id,
         project_id=project_id,
-        source_document_id="reqdoc-blocked-retry",
+        source_document_id="reqdoc-failed-retry",
         selected_api_ids=["get-item"],
-        status="BLOCKED",
+        status="FAILED",
         items=[
             ApiProcessingItem(
                 api_operation_id="get-item",
                 order=1,
-                status="BLOCKED",
+                status="FAILED",
                 current_stage="REVIEWER",
                 workflow_id="workflow-stale",
                 requirement_id="REQ-STALE",
@@ -303,23 +359,23 @@ def test_blocked_queue_can_restart_from_fresh_nlu_snapshot(tmp_path, monkeypatch
     assert item.error_message is None
 
 
-def test_blocked_queue_can_skip_current_item_and_persist_terminal_state(tmp_path, monkeypatch):
-    project_id = "project-blocked-skip"
-    run_id = "queue-blocked-skip"
+def test_failed_queue_can_skip_current_item_and_persist_terminal_state(tmp_path, monkeypatch):
+    project_id = "project-failed-skip"
+    run_id = "queue-failed-skip"
     queue = ApiProcessingQueue(
         run_id=run_id,
         project_id=project_id,
-        source_document_id="reqdoc-blocked-skip",
+        source_document_id="reqdoc-failed-skip",
         selected_api_ids=["get-item"],
-        status="BLOCKED",
+        status="FAILED",
         items=[
             ApiProcessingItem(
                 api_operation_id="get-item",
                 order=1,
-                status="BLOCKED",
+                status="FAILED",
                 current_stage="REVIEWER",
-                workflow_id="workflow-blocked-skip",
-                final_case_set_id="final-blocked-skip",
+                workflow_id="workflow-failed-skip",
+                final_case_set_id="final-failed-skip",
                 error_message="missing deterministic fixture",
             )
         ],
@@ -336,30 +392,30 @@ def test_blocked_queue_can_skip_current_item_and_persist_terminal_state(tmp_path
     assert skipped.status == "SKIPPED"
     assert skipped.current_index == 1
     assert skipped.items[0].status == "SKIPPED"
-    assert skipped.items[0].workflow_id == "workflow-blocked-skip"
-    assert skipped.items[0].final_case_set_id == "final-blocked-skip"
+    assert skipped.items[0].workflow_id == "workflow-failed-skip"
+    assert skipped.items[0].final_case_set_id == "final-failed-skip"
     assert skipped.items[0].error_message == "accepted for later manual review"
     assert QueueStore(tmp_path, project_id).get(run_id).status == "SKIPPED"
 
 
-def test_skipping_blocked_item_starts_next_item_and_keeps_completed_items_ready(tmp_path):
-    project_id = "project-blocked-skip-next"
-    run_id = "queue-blocked-skip-next"
+def test_skipping_failed_item_starts_next_item_and_keeps_completed_items_ready(tmp_path):
+    project_id = "project-failed-skip-next"
+    run_id = "queue-failed-skip-next"
     queue = ApiProcessingQueue(
         run_id=run_id,
         project_id=project_id,
-        source_document_id="reqdoc-blocked-skip-next",
-        selected_api_ids=["blocked-item", "pending-item"],
-        status="BLOCKED",
+        source_document_id="reqdoc-failed-skip-next",
+        selected_api_ids=["failed-item", "pending-item"],
+        status="FAILED",
         current_index=0,
         items=[
             ApiProcessingItem(
-                api_operation_id="blocked-item",
+                api_operation_id="failed-item",
                 order=1,
-                status="BLOCKED",
+                status="FAILED",
                 current_stage="REVIEWER",
-                workflow_id="workflow-blocked",
-                final_case_set_id="final-blocked",
+                workflow_id="workflow-failed",
+                final_case_set_id="final-failed",
                 error_message="coverage gap",
             ),
             ApiProcessingItem(
@@ -406,8 +462,8 @@ def test_skip_after_completed_item_marks_queue_ready_with_skips(tmp_path):
         run_id=run_id,
         project_id=project_id,
         source_document_id="reqdoc-ready-with-skips",
-        selected_api_ids=["completed-item", "blocked-item"],
-        status="BLOCKED",
+        selected_api_ids=["completed-item", "failed-item"],
+        status="FAILED",
         current_index=1,
         items=[
             ApiProcessingItem(
@@ -418,9 +474,9 @@ def test_skip_after_completed_item_marks_queue_ready_with_skips(tmp_path):
                 final_case_set_id="final-completed",
             ),
             ApiProcessingItem(
-                api_operation_id="blocked-item",
+                api_operation_id="failed-item",
                 order=2,
-                status="BLOCKED",
+                status="FAILED",
                 current_stage="REVIEWER",
             ),
         ],

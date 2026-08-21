@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from app.evidence.protocol import EvidenceContext, EvidenceQuery
 from app.models.evidence import EvidenceFact
 from app.providers.llm import SecretReferenceError, resolve_secret_reference
@@ -76,6 +78,8 @@ class AuthFixtureEvidenceProvider:
             except SecretReferenceError:
                 return None
             mode = "explicit auth_ref"
+        elif os.getenv("API_TEST_AUTH_TOKEN"):
+            mode = "explicit API_TEST_AUTH_TOKEN"
         elif not settings.auth_provider.enabled:
             return None
         elif settings.auth_provider.kind == "http":

@@ -168,10 +168,20 @@ class AutomaticAuthProvider:
                 return cached.credentials
             if cached:
                 self._cache.pop(cache_key, None)
-            if configured.kind == "sms":
-                credentials = await self._resolve_sms(settings, base_url, configured)
-            else:
-                credentials = await self._resolve_configured_http(settings, base_url, configured)
+            try:
+                if configured.kind == "sms":
+                    credentials = await self._resolve_sms(settings, base_url, configured)
+                else:
+                    credentials = await self._resolve_configured_http(settings, base_url, configured)
+            except AutomaticAuthenticationError:
+                explicit = self._environment_token()
+                if explicit is None:
+                    raise
+                self._cache[cache_key] = _CachedCredentials(
+                    credentials=explicit,
+                    expires_at=None,
+                )
+                return explicit
             self._cache[cache_key] = _CachedCredentials(
                 credentials=credentials,
                 expires_at=self._expires_at(configured),

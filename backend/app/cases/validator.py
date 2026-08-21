@@ -52,7 +52,10 @@ SUPPORTED_SCHEMA_KEYS = {
 }
 SIDE_EFFECT_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _PATH_PARAMETER = re.compile(r"\{([^{}]+)\}")
-_UNRESOLVED_VALUE = re.compile(r"(?:\{\{[^{}]+\}\}|\$\{[^{}]+\}|\b(?:TODO|TBD)\b)", re.IGNORECASE)
+_UNRESOLVED_VALUE = re.compile(
+    r"(?:\{\{[^{}]+\}\}|\$\{[^{}]+\}|\$UNRESOLVED\[[^\]\r\n]+\]|\b(?:TODO|TBD)\b)",
+    re.IGNORECASE,
+)
 _SUPPORTED_JSON_PATH = re.compile(r"^\$(?:\.[^.\[\]]+|\[\d+\])*$")
 
 
@@ -153,6 +156,21 @@ def validate_case(
         if assertion.type == "response_time_ms" and not isinstance(assertion.expected, (int, float)):
             errors.append(f"response_time_ms requires a numeric expected value: {assertion.assertion_id}")
         normalized_operator = assertion.operator.strip().lower() if assertion.operator else None
+        if (
+            assertion.type == "json_value"
+            and normalized_operator in {"!=", "<>", "ne", "not_equals"}
+            and assertion.expected is True
+            and not any(
+                candidate.type == "json_exists"
+                and candidate.path == assertion.path
+                and (candidate.expected is None or candidate.expected is True)
+                for candidate in case.assertions
+            )
+        ):
+            errors.append(
+                "json_value != true requires an explicit json_exists=true assertion "
+                f"for the same path: {assertion.assertion_id}"
+            )
         if normalized_operator and normalized_operator not in SUPPORTED_OPERATORS:
             errors.append(
                 f"unsupported assertion operator {assertion.operator}: {assertion.assertion_id}"

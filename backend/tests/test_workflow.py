@@ -89,6 +89,92 @@ response: created item id only
     assert "item detail fields" not in excerpt_without_source_range
 
 
+def test_requirement_excerpt_keeps_response_rules_under_same_api_heading():
+    document = """# Get item
+## 1. Basic information
+GET /items/{id}
+## 2. Path parameter
+id must be greater than 0
+## 3. Failure scenarios
+HTTP 200, success=false, errorMsg is `item id is invalid`
+
+# Create item
+POST /items
+"""
+    operation = OperationContract(
+        operation_id="get-item",
+        method="GET",
+        path="/items/{id}",
+        source_document_id="doc-1",
+        source_refs=[
+            SourceReference(
+                source_document_id="doc-1",
+                start_line=3,
+                end_line=3,
+                reference="document:doc-1:lines:3-3",
+            )
+        ],
+        responses=[{"status_code": 200}],
+    )
+
+    excerpt = ApiTestWorkflow._operation_requirement_excerpt(operation, document)
+
+    assert "success=false" in excerpt
+    assert "item id is invalid" in excerpt
+    assert "POST /items" not in excerpt
+
+
+def test_nlu_receives_current_operation_excerpt_instead_of_full_document(tmp_path):
+    project_service, project_id, operation = _project_and_operation(tmp_path)
+    captured: dict[str, str | None] = {}
+
+    def requirement_factory(payload):
+        captured["source_document"] = payload["source_document"]
+        requirement = RequirementDocument(
+            requirement_id="REQ-CURRENT-OPERATION",
+            api=payload["operation"],
+        )
+        return RequirementAgentOutput(
+            requirement=requirement,
+            test_points=TestPointCollection(
+                requirement_id=requirement.requirement_id,
+                requirement_version=1,
+                points=[],
+            ),
+        )
+
+    workflow = ApiTestWorkflow(
+        project_service=project_service,
+        data_dir=tmp_path,
+        nlu_agent=fake_agent(RequirementAgentOutput, requirement_factory),
+        designer_agent=fake_agent(DesignerAgentOutput, lambda _: None),
+        reviewer_agent=fake_agent(ReviewerAgentOutput, lambda _: None),
+    )
+    workflow.invoke_nlu(
+        {
+            "workflow_id": "workflow-current-operation-context",
+            "project_id": project_id,
+            "operation_id": operation.operation_id,
+            "input_document": (
+                "# 查询条目\n"
+                "GET /items/{id}\n"
+                "id | Integer | 是 | 条目 ID\n"
+                "\n"
+                "# 创建条目\n"
+                "POST /items\n"
+                "name | String | 是 | 条目名称\n"
+            ),
+            "events": [],
+            "errors": [],
+        }
+    )
+
+    assert captured["source_document"] is not None
+    assert "id | Integer | 是 | 条目 ID" in captured["source_document"]
+    assert "创建条目" not in captured["source_document"]
+    assert "name | String" not in captured["source_document"]
+
+
 def test_auth_context_keeps_document_level_protocol_without_neighboring_operation_rules():
     document = """# API rules
 
@@ -649,6 +735,36 @@ def test_incomplete_supplement_is_retained_without_second_reviewer(tmp_path, mon
     assert calls == {"requirement": 1, "designer": 2, "reviewer": 1}
 
 
+def test_final_assembler_releases_executable_cases_with_partial_test_point_coverage(tmp_path):
+    workflow, project_id, operation, _ = _build_workflow(tmp_path)
+    result = _invoke_approved_workflow(
+        workflow,
+        {
+            "workflow_id": "workflow-partial-coverage",
+            "project_id": project_id,
+            "operation_id": operation.operation_id,
+            "events": [],
+            "errors": [],
+        },
+    )
+    extra_point = result["test_points"].points[0].model_copy(
+        update={"point_id": "TP-UNRESOLVED-FIXTURE"}
+    )
+    assembled = workflow._final_case_assembler(
+        {
+            **result,
+            "test_points": result["test_points"].model_copy(
+                update={"points": [*result["test_points"].points, extra_point]}
+            ),
+        }
+    )
+
+    assert assembled["status"] == "FINAL_CASES_READY"
+    assert assembled["final_cases"].status == "READY"
+    assert assembled["final_cases"].assembly_errors == []
+    assert any("TP-UNRESOLVED-FIXTURE" in gap for gap in assembled["final_cases"].remaining_gaps)
+
+
 def test_downstream_agents_receive_only_nlu_referenced_evidence(tmp_path):
     workflow, project_id, operation, _ = _build_workflow(tmp_path)
     nlu = workflow.invoke_nlu(
@@ -1013,6 +1129,46 @@ def test_final_assembler_deduplicates_and_retains_bounded_repair_findings_as_gap
     assert any("bounded repair limit" in gap.lower() for gap in assembled["final_cases"].remaining_gaps)
 
 
+def test_final_assembler_merges_same_execution_across_different_test_points(tmp_path):
+    workflow, project_id, operation, _ = _build_workflow(tmp_path)
+    result = _invoke_approved_workflow(
+        workflow,
+        {
+            "workflow_id": "workflow-merge-execution-duplicate",
+            "project_id": project_id,
+            "operation_id": operation.operation_id,
+            "events": [],
+            "errors": [],
+        },
+    )
+    duplicate = result["draft_cases"].cases[0].model_copy(
+        update={
+            "case_id": "CASE-SAME-EXECUTION-DIFFERENT-POINT",
+            "test_point_ids": ["TP-MISSING"],
+            "preconditions": ["No authorization header is required."],
+        }
+    )
+
+    assembled = workflow._final_case_assembler(
+        {
+            **result,
+            "draft_cases": result["draft_cases"].model_copy(
+                update={"cases": [result["draft_cases"].cases[0], duplicate]}
+            ),
+            "supplemental_cases": [],
+            "reviewer_output": ReviewerAgentOutput(
+                duplicate_case_ids=[duplicate.case_id]
+            ),
+        }
+    )
+
+    final_cases = assembled["final_cases"].cases
+    assert [case.case_id for case in final_cases] == ["CASE-INITIAL"]
+    assert final_cases[0].test_point_ids == ["TP-VALID", "TP-MISSING"]
+    assert "No authorization header is required." in final_cases[0].preconditions
+    assert any("Merged duplicate execution case" in gap for gap in assembled["final_cases"].remaining_gaps)
+
+
 def test_final_assembler_removes_invalid_case_when_other_case_preserves_coverage(tmp_path):
     workflow, project_id, operation, _ = _build_workflow(tmp_path)
     result = _invoke_approved_workflow(
@@ -1117,7 +1273,7 @@ def test_final_assembler_keeps_case_when_only_one_assertion_is_unsupported(tmp_p
     )
 
 
-def test_requirement_questions_are_retained_without_blocking_complete_final_cases(tmp_path):
+def test_requirement_questions_are_retained_without_gating_complete_final_cases(tmp_path):
     workflow, project_id, operation, _ = _build_workflow(tmp_path)
     result = _invoke_approved_workflow(
         workflow,

@@ -1,0 +1,146 @@
+{
+  "workflow_id": "workflow-synthetic-001",
+  "project_id": "project-synthetic",
+  "operation_id": "demo-get-item",
+  "source_document_id": "synthetic/demo-get-item.md",
+  "status": "FINAL_CASES_READY",
+  "requirement": {
+    "requirement_id": "REQ-DEMO-001",
+    "version": 1,
+    "source_document_id": "synthetic/demo-get-item.md",
+    "api": {
+      "operation_id": "demo-get-item",
+      "method": "GET",
+      "path": "/demo/items/{id}",
+      "summary": "虚构资源查询接口",
+      "parameters": [
+        {
+          "name": "id",
+          "location": "path",
+          "required": true,
+          "type": "string",
+          "description": "使用脱敏 Fixture 占位符。"
+        }
+      ],
+      "responses": [
+        {"status_code": 200, "description": "合成成功响应。"},
+        {"status_code": 404, "description": "合成资源不存在响应。"}
+      ],
+      "source_refs": [{"reference": "synthetic/demo-get-item.md"}],
+      "confidence": "confirmed"
+    },
+    "preconditions": ["使用脱敏 Fixture，不读取真实业务数据。"],
+    "business_rules": ["仅用于验证快照转换链路。"],
+    "expected_behaviors": ["成功和资源不存在场景均应被保留。"],
+    "evidence_refs": [
+      {
+        "evidence_id": "EVIDENCE-REDACTED-1",
+        "source_type": "synthetic",
+        "reference": "synthetic/demo-get-item.md"
+      }
+    ],
+    "confidence": "confirmed"
+  },
+  "evidence": {
+    "operation_id": "demo-get-item",
+    "facts": [
+      {
+        "evidence_id": "EVIDENCE-REDACTED-1",
+        "source_type": "synthetic",
+        "reference": "synthetic/demo-get-item.md",
+        "fact": "合成证据：仅用于验证 workflow snapshot 适配器。",
+        "safe_excerpt": "<redacted>"
+      }
+    ],
+    "provider_status": {"synthetic": "ready"},
+    "snapshot_id": "evidence-synthetic-001"
+  },
+  "test_points": {
+    "requirement_id": "REQ-DEMO-001",
+    "requirement_version": 1,
+    "points": [
+      {
+        "point_id": "TP-1",
+        "requirement_id": "REQ-DEMO-001",
+        "title": "合法资源返回成功",
+        "category": "positive",
+        "action": "使用 <existing-fixture-id> 发起 GET 请求。",
+        "expected_result": "返回合成成功响应。",
+        "evidence_refs": ["EVIDENCE-REDACTED-1"]
+      },
+      {
+        "point_id": "TP-2",
+        "requirement_id": "REQ-DEMO-001",
+        "title": "不存在资源返回 404",
+        "category": "negative",
+        "action": "使用 <absent-fixture-id> 发起 GET 请求。",
+        "expected_result": "返回合成资源不存在响应。",
+        "evidence_refs": ["EVIDENCE-REDACTED-1"]
+      }
+    ]
+  },
+  "final_cases": {
+    "final_case_set_id": "case-set-synthetic-001",
+    "requirement_id": "REQ-DEMO-001",
+    "requirement_fingerprint": "fingerprint-synthetic",
+    "api_operation_id": "demo-get-item",
+    "status": "READY",
+    "cases": [
+      {
+        "case_id": "CASE-1",
+        "requirement_id": "REQ-DEMO-001",
+        "test_point_ids": ["TP-1"],
+        "title": "合成合法资源查询",
+        "category": "positive",
+        "steps": ["发送脱敏 GET 请求。"],
+        "expected_behavior": "返回合成成功响应。",
+        "request": {
+          "method": "GET",
+          "path": "/demo/items/<existing-fixture-id>"
+        },
+        "assertions": [
+          {"assertion_id": "A-1", "type": "status_code", "expected": 200}
+        ],
+        "evidence_refs": ["EVIDENCE-REDACTED-1"]
+      },
+      {
+        "case_id": "CASE-2",
+        "requirement_id": "REQ-DEMO-001",
+        "test_point_ids": ["TP-2"],
+        "title": "合成不存在资源查询",
+        "category": "negative",
+        "steps": ["发送脱敏 GET 请求。"],
+        "expected_behavior": "返回合成资源不存在响应。",
+        "request": {
+          "method": "GET",
+          "path": "/demo/items/<absent-fixture-id>"
+        },
+        "assertions": [
+          {"assertion_id": "A-2", "type": "status_code", "expected": 404}
+        ],
+        "evidence_refs": ["EVIDENCE-REDACTED-1"]
+      }
+    ]
+  },
+  "reviewer_output": {
+    "missing_test_point_ids": ["TP-OBSERVATION-REDACTED"],
+    "invalid_case_ids": [],
+    "duplicate_case_ids": [],
+    "unsupported_assertion_ids": [],
+    "semantic_gaps": [],
+    "remaining_gaps": ["合成快照未包含观察点，仅用于验证待标注状态。"]
+  },
+  "metadata": {
+    "sample_origin": "synthetic-redacted-workflow-snapshot",
+    "llm_nlu_call_1_attempt": "1",
+    "llm_nlu_call_1_mode": "generate",
+    "llm_nlu_call_1_status": "success",
+    "llm_nlu_call_1_duration_ms": "100",
+    "llm_nlu_call_1_prompt_tokens": "120",
+    "llm_nlu_call_1_completion_tokens": "80"
+  },
+  "events": [
+    {"type": "synthetic_snapshot", "status": "ready"}
+  ],
+  "errors": []
+}

@@ -18,6 +18,7 @@ export interface CaseSelectionActionContext {
   setSideEffectsConfirmed: StateSetter<boolean>;
 }
 
+
 export function createCaseSelectionActions(context: CaseSelectionActionContext) {
   const {
     allFinalCases,
@@ -63,4 +64,3 @@ export function createCaseSelectionActions(context: CaseSelectionActionContext) 
     toggleAllCases,
   };
 }
-

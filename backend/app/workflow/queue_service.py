@@ -124,7 +124,7 @@ class SequentialQueueService:
 
     def _start(self, project_id: str, run_id: str) -> tuple[ApiProcessingQueue, WorkflowRunSnapshot]:
         queue = self.get(project_id, run_id)
-        if queue.status not in {"PENDING", "FAILED", "BLOCKED"}:
+        if queue.status not in {"PENDING", "FAILED"}:
             raise WorkflowRunError(f"queue cannot start from status {queue.status}")
         return self._start_current(queue)
 
@@ -246,12 +246,21 @@ class SequentialQueueService:
         run_id: str,
     ) -> tuple[ApiProcessingQueue, WorkflowRunSnapshot]:
         queue = self.get(project_id, run_id)
-        item = self._current_item(queue)
-        if queue.status not in {"FAILED", "BLOCKED"}:
+        retry_index = queue.current_index
+        # 单接口失败后被跳过时，队列游标已经移到末尾，仍允许复用该接口的 NLU 快照重试下游。
+        if (
+            queue.status == "SKIPPED"
+            and len(queue.items) == 1
+            and queue.current_index == len(queue.items)
+        ):
+            retry_index = 0
+        if queue.status not in {"FAILED", "SKIPPED"}:
             raise WorkflowRunError(
-                f"cached design retry requires a FAILED or BLOCKED queue, got {queue.status}"
+                f"cached design retry requires a failed or single-item skipped queue, got {queue.status}"
             )
-        if item.status not in {"FAILED", "BLOCKED"}:
+        item = queue.items[retry_index] if retry_index < len(queue.items) else None
+        expected_item_status = "SKIPPED" if queue.status == "SKIPPED" else "FAILED"
+        if item is None or item.status != expected_item_status:
             raise WorkflowRunError("current API is not eligible for a downstream retry")
         if item.current_stage not in {"DESIGNER", "REVIEWER"} or not item.workflow_id:
             raise WorkflowRunError(
@@ -307,16 +316,16 @@ class SequentialQueueService:
                 "error_message": None,
             }
         )
-        retry_queue = self._replace_current(queue, retry_item).model_copy(
-            update={"status": "RUNNING"}
+        retry_queue = self._replace_item(queue, retry_index, retry_item).model_copy(
+            update={"current_index": retry_index, "status": "RUNNING"}
         )
         QueueStore(self.data_dir, project_id).save(retry_queue)
         return retry_queue, retry_snapshot
 
     def skip_current(self, project_id: str, run_id: str, reason: str | None = None) -> ApiProcessingQueue:
-        """Skip a blocked API while preserving its workflow for later review.
+        """Skip a failed API while preserving its workflow for later review.
 
-        Skipping is intentionally separate from retrying: the blocked workflow
+        Skipping is intentionally separate from retrying: the failed workflow
         and its draft Final Cases remain available for audit, while the queue
         can move on to the next API (or become a terminal skipped queue when
         this is the last item).
@@ -324,11 +333,11 @@ class SequentialQueueService:
 
         with _transition_lock(self.data_dir, project_id, run_id):
             queue = self.get(project_id, run_id)
-            if queue.status != "BLOCKED":
-                raise WorkflowRunError("only a blocked queue can skip its current API")
+            if queue.status != "FAILED":
+                raise WorkflowRunError("only a failed queue can skip its current API")
             item = self._current_item(queue)
-            if item.status != "BLOCKED":
-                raise WorkflowRunError("only a blocked API can be skipped")
+            if item.status != "FAILED":
+                raise WorkflowRunError("only a failed API can be skipped")
             message = (
                 (reason or "").strip()
                 or (item.error_message or "").strip()
@@ -405,9 +414,9 @@ class SequentialQueueService:
         if snapshot.status == "NEEDS_CLARIFICATION" and snapshot.final_cases is not None:
             details = snapshot.final_cases.assembly_errors or snapshot.final_cases.remaining_gaps
             message = "; ".join(details[:10]) or "Final Cases require clarification"
-            blocked_item = item.model_copy(
+            failed_item = item.model_copy(
                 update={
-                    "status": "BLOCKED",
+                    "status": "FAILED",
                     "current_stage": "REVIEWER",
                     "requirement_id": (
                         snapshot.requirement.requirement_id if snapshot.requirement else item.requirement_id
@@ -419,11 +428,11 @@ class SequentialQueueService:
                     "error_message": message,
                 }
             )
-            blocked_queue = self._replace_current(queue, blocked_item).model_copy(
-                update={"status": "BLOCKED"}
+            failed_queue = self._replace_current(queue, failed_item).model_copy(
+                update={"status": "FAILED"}
             )
-            QueueStore(self.data_dir, project_id).save(blocked_queue)
-            return blocked_queue, snapshot
+            QueueStore(self.data_dir, project_id).save(failed_queue)
+            return failed_queue, snapshot
         if snapshot.status != "FINAL_CASES_READY" or snapshot.final_cases is None:
             failed_item = item.model_copy(update={"status": "FAILED", "error_message": "Final Cases were not ready"})
             failed_queue = self._replace_current(queue, failed_item).model_copy(update={"status": "FAILED"})
@@ -467,7 +476,7 @@ class SequentialQueueService:
 
     def _start_current(self, queue: ApiProcessingQueue) -> tuple[ApiProcessingQueue, WorkflowRunSnapshot]:
         current = self._current_item(queue)
-        if current.status in {"PENDING", "FAILED", "BLOCKED"}:
+        if current.status in {"PENDING", "FAILED"}:
             current = current.model_copy(
                 update={
                     "status": "NLU_RUNNING",

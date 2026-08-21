@@ -207,11 +207,23 @@ class ApiTestWorkflow(WorkflowRulesMixin, DesignNodesMixin):
         )
 
     def _nlu_agent_node(self, state: WorkflowState) -> dict[str, Any]:
+        operation = state["operation"]
+        source_document = state.get("input_document")
+        if source_document:
+            operation_excerpt = self._operation_requirement_excerpt(
+                operation,
+                source_document,
+            )
+            source_document = self._operation_auth_context(
+                operation,
+                source_document,
+                operation_excerpt,
+            )
         output = self.nlu_agent.invoke(
             {
-                "operation": state["operation"],
-                "current_api": state["operation"],
-                "source_document": state.get("input_document"),
+                "operation": operation,
+                "current_api": operation,
+                "source_document": source_document,
                 "evidence": state["evidence"],
                 "auth_protocol": state.get("auth_protocol", AuthProtocol()),
             }

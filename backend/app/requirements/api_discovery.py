@@ -13,6 +13,7 @@ HTTP_OPERATION = re.compile(
 )
 HEADING = re.compile(r"^\s*(#{1,6})\s+(.+?)\s*$|^\s*((?:\d+\.)+\d*)[.)、]?\s+(.+?)\s*$")
 MARKDOWN_TABLE_ROW = re.compile(r"^\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*$")
+MARKDOWN_TABLE_LINE = re.compile(r"^\s*\|.*\|\s*$")
 HTTP_METHOD_VALUE = re.compile(r"^\s*`?(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b", re.IGNORECASE)
 HTTP_PATH_VALUE = re.compile(r"`\s*(/[A-Za-z0-9_./:{}?=&%+\-]+)\s*`|(/[A-Za-z0-9_./:{}?=&%+\-]+)")
 
@@ -23,6 +24,26 @@ class _OperationMention:
     path: str
     start_line: int
     metadata: dict[str, str]
+
+
+@dataclass(frozen=True)
+class _ParameterSpec:
+    name: str
+    schema_type: str
+    format: str | None
+    required: bool
+    description: str | None
+    constraints: dict[str, object]
+
+
+DEFAULT_PARAMETER_SPEC = _ParameterSpec(
+    name="",
+    schema_type="string",
+    format=None,
+    required=True,
+    description=None,
+    constraints={},
+)
 
 
 class ApiDiscoveryService:
@@ -48,10 +69,47 @@ class ApiDiscoveryService:
             source_text = "\n".join(lines[start_line - 1 : end_line]).strip()
             operation_id = self._operation_id(method, path, used_ids)
             used_ids.add(operation_id)
-            parameters = [
-                OperationParameter(name=name, location="path", required=True, type="string")
-                for name in re.findall(r"\{([^{}]+)\}", path)
-            ]
+            parameter_specs = self._markdown_parameter_specs(
+                lines[start_line - 1 : next_start - 1],
+                path,
+            )
+            parameters = []
+            path_parameter_names = {
+                name.casefold() for name in re.findall(r"\{([^{}]+)\}", path)
+            }
+            for name in re.findall(r"\{([^{}]+)\}", path):
+                spec = parameter_specs.get(name.casefold(), DEFAULT_PARAMETER_SPEC)
+                parameters.append(
+                    OperationParameter(
+                        name=name,
+                        location="path",
+                        required=spec.required,
+                        type=spec.schema_type,
+                        format=spec.format,
+                        description=spec.description,
+                        constraints=spec.constraints,
+                    )
+                )
+            for normalized_name, spec in parameter_specs.items():
+                if normalized_name in path_parameter_names:
+                    continue
+                parameters.append(
+                    OperationParameter(
+                        name=spec.name,
+                        location="query",
+                        required=spec.required,
+                        type=spec.schema_type,
+                        format=spec.format,
+                        description=spec.description,
+                        constraints=spec.constraints,
+                    )
+                )
+            contract_metadata = {
+                "discovery": "requirement_document_parser",
+                **mention.metadata,
+            }
+            if parameter_specs:
+                contract_metadata["parameter_source"] = "markdown_parameter_table"
             operations.append(
                 OperationContract(
                     operation_id=operation_id,
@@ -73,13 +131,179 @@ class ApiDiscoveryService:
                         )
                     ],
                     confidence="confirmed",
-                    contract_metadata={
-                        "discovery": "requirement_document_parser",
-                        **mention.metadata,
-                    },
+                    contract_metadata=contract_metadata,
                 )
             )
         return operations
+
+    @classmethod
+    def _markdown_parameter_specs(
+        cls,
+        lines: list[str],
+        path: str,
+    ) -> dict[str, _ParameterSpec]:
+        specs: dict[str, _ParameterSpec] = {}
+        for headers, rows in cls._markdown_table_blocks(lines):
+            name_index = cls._header_index(
+                headers,
+                {"参数", "参数名", "名称", "name", "parameter", "parametername"},
+            )
+            type_index = cls._header_index(headers, {"类型", "type", "schema", "数据类型"})
+            if name_index is None or type_index is None:
+                continue
+            required_index = cls._header_index(headers, {"必填", "required", "是否必填"})
+            constraint_index = cls._header_index(headers, {"约束", "限制", "constraints", "constraint"})
+            for row in rows:
+                if max(name_index, type_index) >= len(row):
+                    continue
+                name = cls._clean_table_value(row[name_index])
+                normalized_name = name.casefold()
+                if not normalized_name:
+                    continue
+                raw_type = cls._clean_table_value(row[type_index])
+                schema_type, schema_format = cls._schema_type(raw_type)
+                required_value = (
+                    cls._clean_table_value(row[required_index])
+                    if required_index is not None and required_index < len(row)
+                    else ""
+                )
+                constraint_text = (
+                    cls._clean_table_value(row[constraint_index])
+                    if constraint_index is not None and constraint_index < len(row)
+                    else ""
+                )
+                specs[normalized_name] = _ParameterSpec(
+                    name=name,
+                    schema_type=schema_type,
+                    format=schema_format,
+                    required=cls._parse_required(required_value, default=True),
+                    description=constraint_text or None,
+                    constraints=cls._parse_constraints(constraint_text),
+                )
+        return specs
+
+    @classmethod
+    def _markdown_table_blocks(
+        cls,
+        lines: list[str],
+    ) -> list[tuple[list[str], list[list[str]]]]:
+        tables: list[tuple[list[str], list[list[str]]]] = []
+        index = 0
+        while index + 1 < len(lines):
+            headers = cls._split_markdown_table_row(lines[index])
+            separator = cls._split_markdown_table_row(lines[index + 1])
+            if (
+                headers is None
+                or separator is None
+                or len(headers) != len(separator)
+                or not all(cls._is_table_separator(value) for value in separator)
+            ):
+                index += 1
+                continue
+            rows: list[list[str]] = []
+            cursor = index + 2
+            while cursor < len(lines):
+                row = cls._split_markdown_table_row(lines[cursor])
+                if row is None or len(row) != len(headers):
+                    break
+                rows.append(row)
+                cursor += 1
+            if rows:
+                tables.append((headers, rows))
+            index = max(cursor, index + 1)
+        return tables
+
+    @staticmethod
+    def _split_markdown_table_row(line: str) -> list[str] | None:
+        if not MARKDOWN_TABLE_LINE.match(line):
+            return None
+        value = line.strip()[1:-1]
+        return [item.strip() for item in value.split("|")]
+
+    @staticmethod
+    def _is_table_separator(value: str) -> bool:
+        return re.fullmatch(r":?-{3,}:?", value.replace(" ", "")) is not None
+
+    @classmethod
+    def _header_index(cls, headers: list[str], aliases: set[str]) -> int | None:
+        normalized_aliases = {cls._normalize_table_key(alias) for alias in aliases}
+        for index, header in enumerate(headers):
+            if cls._normalize_table_key(header) in normalized_aliases:
+                return index
+        return None
+
+    @staticmethod
+    def _clean_table_value(value: str) -> str:
+        return value.strip().strip("`").strip()
+
+    @staticmethod
+    def _parse_required(value: str, *, default: bool) -> bool:
+        if not value:
+            return default
+        folded = re.sub(r"\s+", "", value).casefold()
+        if folded in {"否", "no", "false", "可选", "非必填", "optional"}:
+            return False
+        if folded in {"是", "yes", "true", "必填", "必须", "required"}:
+            return True
+        return default
+
+    @staticmethod
+    def _schema_type(value: str) -> tuple[str, str | None]:
+        folded = value.casefold()
+        if re.search(r"(?<![a-z])long(?![a-z])|长整型|长整数", folded):
+            return "integer", "int64"
+        if re.search(r"(?<![a-z])(?:integer|int|short)(?![a-z])|整型|整数", folded):
+            return "integer", "int32"
+        if re.search(r"(?<![a-z])double(?![a-z])", folded):
+            return "number", "double"
+        if re.search(r"(?<![a-z])float(?![a-z])", folded):
+            return "number", "float"
+        if re.search(r"(?<![a-z])boolean(?![a-z])|布尔", folded):
+            return "boolean", None
+        return "string", None
+
+    @staticmethod
+    def _parse_constraints(value: str) -> dict[str, object]:
+        if not value:
+            return {}
+        compact = re.sub(r"\s+", "", value)
+        number = r"-?\d+(?:\.\d+)?"
+
+        def numeric(raw: str) -> int | float:
+            return float(raw) if "." in raw else int(raw)
+
+        constraints: dict[str, object] = {}
+        inclusive_minimum = re.search(
+            rf"(?:大于等于|不小于|不少于|至少|>=|≥)({number})",
+            compact,
+            flags=re.IGNORECASE,
+        )
+        exclusive_minimum = re.search(
+            rf"(?:大于|超过|高于|>)({number})",
+            compact,
+            flags=re.IGNORECASE,
+        )
+        inclusive_maximum = re.search(
+            rf"(?:不大于|不超过|小于等于|<=|≤)({number})",
+            compact,
+            flags=re.IGNORECASE,
+        )
+        exclusive_maximum = re.search(
+            rf"(?:小于|低于|少于|<)({number})",
+            compact,
+            flags=re.IGNORECASE,
+        )
+        if inclusive_minimum:
+            constraints["minimum"] = numeric(inclusive_minimum.group(1))
+        elif exclusive_minimum:
+            constraints["minimum"] = numeric(exclusive_minimum.group(1))
+            constraints["exclusiveMinimum"] = True
+        if inclusive_maximum:
+            constraints["maximum"] = numeric(inclusive_maximum.group(1))
+        elif exclusive_maximum:
+            constraints["maximum"] = numeric(exclusive_maximum.group(1))
+            constraints["exclusiveMaximum"] = True
+        return constraints
 
     def _operation_mentions(self, content: str, lines: list[str]) -> list[_OperationMention]:
         mentions = [

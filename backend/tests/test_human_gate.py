@@ -377,7 +377,7 @@ def test_batch_approval_ignores_skipped_queue_items(tmp_path):
         run_id="queue-ready-with-skips",
         project_id=project_id,
         source_document_id="document-ready-with-skips",
-        selected_api_ids=[operation.operation_id, "blocked-item"],
+        selected_api_ids=[operation.operation_id, "skipped-item"],
         status="READY_WITH_SKIPS",
         current_index=2,
         items=[
@@ -392,7 +392,7 @@ def test_batch_approval_ignores_skipped_queue_items(tmp_path):
                 final_case_set_id=snapshot.final_cases.final_case_set_id,
             ),
             ApiProcessingItem(
-                api_operation_id="blocked-item",
+                api_operation_id="skipped-item",
                 order=2,
                 status="SKIPPED",
                 current_stage="REVIEWER",

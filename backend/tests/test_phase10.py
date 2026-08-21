@@ -10,6 +10,7 @@ from app.evidence.registry import EvidenceRegistry
 from app.models.cases import TestCase as CaseModel
 from app.models.contracts import OperationContract
 from app.models.projects import ProjectSettings
+from app.models.testpoints import TestPoint
 
 
 def test_database_schema_provider_is_read_only_and_allowlisted(tmp_path, monkeypatch):
@@ -248,3 +249,150 @@ def test_database_relation_fixtures_resolve_referenced_unreferenced_and_duplicat
     )
     duplicate_resolved = DatabaseFixtureResolver().resolve_case(duplicate_case, settings)
     assert duplicate_resolved.request.body["name"] == "Tea"
+
+
+def test_database_relation_fixtures_use_generic_schema_conventions(tmp_path, monkeypatch):
+    database = tmp_path / "generic-relations.db"
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        """
+        create table tb_catalog (id integer primary key, label text not null);
+        create table tb_entry (id integer primary key, catalog_id integer not null);
+        insert into tb_catalog (id, label) values (1, 'A'), (2, 'B');
+        insert into tb_entry (id, catalog_id) values (10, 1);
+        """
+    )
+    connection.commit()
+    connection.close()
+    monkeypatch.setenv("GENERIC_RELATION_DSN", f"sqlite:///{database.as_posix()}")
+    settings = ProjectSettings(
+        sut_target={"base_url": "http://127.0.0.1:8081"},
+        database={
+            "enabled": True,
+            "dialect": "sqlite",
+            "dsn_ref": "env:GENERIC_RELATION_DSN",
+            "readonly": True,
+            "allowed_tables": ["tb_catalog", "tb_entry"],
+        },
+    )
+    context = EvidenceContext(
+        project_id="project-generic-relations",
+        operation=OperationContract(
+            operation_id="delete-catalog",
+            method="DELETE",
+            path="/catalog/{id}",
+            responses=[{"status_code": 200}],
+        ),
+        settings=settings,
+    )
+
+    facts = DatabaseSchemaEvidenceProvider().retrieve(context, EvidenceQuery())
+    relation_fact = next(
+        fact for fact in facts if fact.reference == "database-fixture:tb_catalog:relations"
+    )
+    assert "$DB_FIXTURE[referenced:tb_catalog:id:tb_entry:catalog_id]" in relation_fact.fact
+    assert "$DB_FIXTURE[unreferenced:tb_catalog:id:tb_entry:catalog_id]" in relation_fact.fact
+
+
+def test_database_fixture_binder_replaces_model_literal_with_semantic_fixture(tmp_path, monkeypatch):
+    database = tmp_path / "bind.db"
+    connection = sqlite3.connect(database)
+    connection.execute("create table items (id integer primary key, name text not null)")
+    connection.executemany(
+        "insert into items (id, name) values (?, ?)",
+        [(7, "one"), (11, "two")],
+    )
+    connection.commit()
+    connection.close()
+    monkeypatch.setenv("BIND_DSN", f"sqlite:///{database.as_posix()}")
+    settings = ProjectSettings(
+        sut_target={"base_url": "http://127.0.0.1:8081"},
+        database={
+            "enabled": True,
+            "dialect": "sqlite",
+            "dsn_ref": "env:BIND_DSN",
+            "readonly": True,
+            "allowed_tables": ["items"],
+        },
+    )
+    operation = OperationContract(
+        operation_id="get-item",
+        method="GET",
+        path="/items/{id}",
+        parameters=[{"name": "id", "location": "path", "required": True, "type": "integer"}],
+        responses=[{"status_code": 200}],
+    )
+    evidence = EvidenceRegistry([DatabaseSchemaEvidenceProvider()]).collect(
+        EvidenceContext(project_id="project-bind", operation=operation, settings=settings),
+        EvidenceQuery(),
+    )
+    fixture_fact = next(fact for fact in evidence.facts if fact.source_type == "database_fixture")
+    case = CaseModel.model_validate(
+        {
+            "case_id": "case-bind",
+            "requirement_id": "req-bind",
+            "test_point_ids": ["tp-missing"],
+            "title": "查询不存在的记录",
+            "category": "negative",
+            "steps": ["send request"],
+            "expected_behavior": "返回 not found",
+            "request": {
+                "method": "GET",
+                "path": "/items/{id}",
+                "path_params": {"id": 999},
+                "query_params": {},
+                "headers": {},
+                "body": None,
+            },
+            "assertions": [
+                {
+                    "assertion_id": "assert-status",
+                    "type": "status_code",
+                    "expected": 200,
+                    "evidence_refs": [fixture_fact.evidence_id],
+                }
+            ],
+            "evidence_refs": [fixture_fact.evidence_id],
+            "source": "initial",
+        }
+    )
+    bound = DatabaseFixtureResolver().bind_case_fixtures(
+        case,
+        operation=operation,
+        points=[
+            TestPoint(
+                point_id="tp-missing",
+                requirement_id="req-bind",
+                title="查询不存在的记录",
+                category="negative",
+                action="使用不存在的 id",
+                expected_result="返回 not found",
+            )
+        ],
+        evidence=evidence,
+    )
+    assert bound.request.path_params["id"] == "$DB_FIXTURE[absent:items:id]"
+    resolved = DatabaseFixtureResolver().resolve_case(bound, settings)
+    assert resolved.request.path_params["id"] == 12
+
+
+def test_database_dsn_can_be_discovered_from_spring_config_with_env_credentials(tmp_path, monkeypatch):
+    resources = tmp_path / "src" / "main" / "resources"
+    resources.mkdir(parents=True)
+    (resources / "application.yml").write_text(
+        """
+spring:
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/demo?useSSL=false
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DB_USERNAME", "readonly-user")
+    monkeypatch.setenv("DB_PASSWORD", "safe-password")
+    from app.evidence.providers.database import _resolve_database_dsn
+
+    assert _resolve_database_dsn("env:MISSING_DSN", str(tmp_path)) == (
+        "mysql+pymysql://readonly-user:safe-password@127.0.0.1:3306/demo?useSSL=false"
+    )

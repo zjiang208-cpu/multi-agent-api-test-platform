@@ -1,0 +1,42 @@
+operation_id: get-shop-id
+base_sample: samples/get-shop-id-current-fixed-redacted.json
+prompt_version: nlu:1.5.8|designer:1.5.8|reviewer:1.3.8
+status: prepared_for_reviewer_run
+notes: >-
+  这是 Reviewer 缺陷注入计划，不是 Reviewer 结果。每个 Mutation 都应从 base_sample
+  通过 evals.mutations.reviewer_mutations 生成，再调用 Reviewer，最后把 Reviewer 的结构化输出
+  写入本地样本；在此之前不得填写质量数字。
+mutations:
+  - mutation_id: delete-case:CASE-GET-SHOP-006
+    kind: delete_case
+    target_case_id: CASE-GET-SHOP-006
+    reviewer_field: missing_test_point_ids
+    target_ids:
+      - tp-get-shop-id-006
+    description: 删除不存在商铺用例，制造 Test Point 覆盖缺口。
+  - mutation_id: remove-required-path-param:CASE-GET-SHOP-001:id
+    kind: remove_required_path_param
+    target_case_id: CASE-GET-SHOP-001
+    target_parameter_name: id
+    reviewer_field: invalid_case_ids
+    target_ids:
+      - CASE-GET-SHOP-001
+    description: 删除正向用例的必填 id path 参数值，制造结构合法但请求不可执行的用例。
+  - mutation_id: duplicate-case:CASE-GET-SHOP-001
+    kind: duplicate_case
+    target_case_id: CASE-GET-SHOP-001
+    reviewer_field: duplicate_case_ids
+    target_ids:
+      - CASE-GET-SHOP-001
+      - CASE-GET-SHOP-001__duplicate
+    target_match: any
+    description: 复制正向用例，制造重复用例缺陷。
+  - mutation_id: unsupported-assertion-path:CASE-GET-SHOP-002:ASSERT-GET-SHOP-002-ERRORMSG
+    kind: unsupported_assertion_path
+    target_case_id: CASE-GET-SHOP-002
+    target_assertion_id: ASSERT-GET-SHOP-002-ERRORMSG
+    path: $.data[*].id
+    reviewer_field: unsupported_assertion_ids
+    target_ids:
+      - ASSERT-GET-SHOP-002-ERRORMSG
+    description: 把 id=0 失败场景的断言改成执行器不支持的通配符路径。

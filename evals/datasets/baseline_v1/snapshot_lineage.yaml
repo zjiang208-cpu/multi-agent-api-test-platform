@@ -1,0 +1,29 @@
+dataset_id: baseline_v1
+operation_id: get-shop-id
+status: local_only
+notes: >-
+  这里只登记脱敏后的版本、数量和已知差异，不复制 workflow 原文、业务响应、模型输出或密钥。
+variants:
+  - variant_id: get-shop-id-pre-fix-1.5.7
+    status: historical_only
+    prompt_version: nlu:1.5.7|designer:1.5.7|reviewer:1.3.7
+    generated_test_points: 7
+    generated_cases: 5
+    source: private-local-workflow-history
+    use_for_scoring: false
+    known_differences:
+      - 包含公开接口不携带 Authorization 的额外点，当前 Ground Truth 未将其列为核心点。
+      - 对 id=0、负数和非数字 ID 的失败状态码使用了不稳定的 ne 200 断言。
+      - id=0 的 success 期望与当前业务协议不一致，不能作为质量基线。
+  - variant_id: get-shop-id-current-fixed-1.5.8
+    status: candidate_official
+    prompt_version: nlu:1.5.8|designer:1.5.8|reviewer:1.3.8
+    generated_test_points: 6
+    generated_cases: 5
+    source: samples/get-shop-id-current-fixed-redacted.json
+    use_for_scoring: pending_ground_truth_verification
+    known_differences:
+      - 保留 id=0 和负数两个取值，但映射到同一个“id 不大于0” Ground Truth 点。
+      - 保留 id=1 下界点，前置条件是测试数据确实存在 ID 为1的商铺。
+      - 保留非数字 ID观察点，不固化需求文档未规定的 HTTP 状态码和响应体。
+      - 正向用例保留 HTTP 状态、success、data 和商铺字段类型断言。

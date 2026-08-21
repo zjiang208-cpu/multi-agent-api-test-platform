@@ -241,6 +241,7 @@ class DesignNodesMixin:
         fixture_resolver = DatabaseFixtureResolver()
         known_points = {point.point_id for point in state["test_points"].points}
         known_evidence = {fact.evidence_id for fact in state["evidence"].facts}
+        seen_execution_semantics: dict[str, str] = {}
         for case, is_supplemental in [
             *((case, False) for case in draft.cases),
             *((case, True) for case in supplemental_cases),
@@ -298,6 +299,12 @@ class DesignNodesMixin:
             if case.case_id in seen_ids:
                 remaining_gaps.append(f"Removed duplicate case ID: {case.case_id}")
                 continue
+            case = fixture_resolver.bind_case_fixtures(
+                case,
+                operation=state["operation"],
+                points=state["test_points"].points,
+                evidence=state["evidence"],
+            )
             try:
                 case = fixture_resolver.resolve_case(case, project.settings)
             except (ValueError, SecretReferenceError) as exc:
@@ -312,8 +319,51 @@ class DesignNodesMixin:
                     f"{case.case_id} duplicates {seen_semantics[semantic_key]}"
                 )
                 continue
+            execution_key = self._case_execution_key(case)
+            existing_execution_case_id = seen_execution_semantics.get(execution_key)
+            if existing_execution_case_id is not None:
+                existing_index = next(
+                    index
+                    for index, retained_case in enumerate(cases)
+                    if retained_case.case_id == existing_execution_case_id
+                )
+                existing_case = cases[existing_index]
+                merged_point_ids = list(
+                    dict.fromkeys(
+                        [*existing_case.test_point_ids, *case.test_point_ids]
+                    )
+                )
+                merged_preconditions = list(
+                    dict.fromkeys(
+                        [*existing_case.preconditions, *case.preconditions]
+                    )
+                )
+                cases[existing_index] = existing_case.model_copy(
+                    update={
+                        "test_point_ids": merged_point_ids,
+                        "preconditions": merged_preconditions,
+                        "evidence_refs": list(
+                            dict.fromkeys(
+                                [*existing_case.evidence_refs, *case.evidence_refs]
+                            )
+                        ),
+                    }
+                )
+                if merged_point_ids == existing_case.test_point_ids:
+                    remaining_gaps.append(
+                        "Removed semantic duplicate case: "
+                        f"{case.case_id} duplicates {existing_execution_case_id}"
+                    )
+                else:
+                    remaining_gaps.append(
+                        "Merged duplicate execution case: "
+                        f"{case.case_id} into {existing_execution_case_id}; "
+                        "test-point coverage was preserved."
+                    )
+                continue
             seen_ids.add(case.case_id)
             seen_semantics[semantic_key] = case.case_id
+            seen_execution_semantics[execution_key] = case.case_id
             cases.append(case)
             if is_supplemental:
                 retained_added_ids.append(case.case_id)
@@ -325,11 +375,9 @@ class DesignNodesMixin:
             assembly_errors.append("no test points were generated")
         if not cases:
             assembly_errors.append("no test cases were generated")
-        # Coverage gaps are review findings, not a reason to discard every
-        # executable Case. They remain visible as warnings and can be handled by
-        # selecting the generated cases at the Human Gate.
         if missing_points:
-            remaining_gaps.append(f"Test points still uncovered: {', '.join(missing_points)}")
+            message = f"Test points still uncovered: {', '.join(missing_points)}"
+            remaining_gaps.append(message)
         if review.missing_test_point_ids:
             remaining_gaps.append(
                 "Reviewer reported semantically uncovered test points: "
@@ -374,8 +422,8 @@ class DesignNodesMixin:
         # questions. Keep questions and reviewer gaps visible on Final Cases,
         # then let the second Human Gate decide which generated Cases to execute.
         # A partial review finding must not hide otherwise executable Cases;
-        # only an empty generated Case set is a hard blocker.
-        status = "READY" if not assembly_errors else "NEEDS_CLARIFICATION"
+        # only an empty generated Case set is a hard failure.
+        status = "READY" if cases else "NEEDS_CLARIFICATION"
         final_cases = FinalCaseSet(
             final_case_set_id=f"final-{uuid4().hex}",
             requirement_id=requirement.requirement_id,
@@ -396,4 +444,3 @@ class DesignNodesMixin:
             node="final_case_assembler",
             message=f"Final Cases assembled with status {status}.",
         )
-

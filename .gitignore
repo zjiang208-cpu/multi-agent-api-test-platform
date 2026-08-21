@@ -11,6 +11,8 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+# pytest 临时测试目录
+backend/.pytest-basetemp-*/
 .mypy_cache/
 .ruff_cache/
 .coverage
@@ -22,6 +24,12 @@ build/
 *.egg-info/
 node_modules/
 frontend/dist/
+evals/reports/
+evals/datasets/**/manifest.yaml
+evals/datasets/**/requirements_catalog.yaml
+evals/datasets/**/samples/
+evals/datasets/**/raw/
+evals/datasets/**/pilots/
 output/
 tmp/
 *.log

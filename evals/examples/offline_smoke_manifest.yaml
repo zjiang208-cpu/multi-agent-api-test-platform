@@ -1,0 +1,54 @@
+dataset_id: offline_smoke_v1
+version: 1.0.0
+source: local-synthetic-only
+annotation_status: verified
+notes: 仅用于验证离线评测链路，不代表真实业务或 LLM 质量结果。
+operations:
+  - operation_id: demo-get-item
+    method: GET
+    path: /demo/items/{id}
+    source_reference: synthetic/demo-get-item.md
+    annotation_status: verified
+    notes: 虚构接口，仅用于离线测试。
+    points:
+      - point_id: DEMO-GET-001
+        description: 合法资源 ID 返回成功响应。
+        category: positive
+        required_assertions:
+          - assertion_id: DEMO-GET-001-A
+            type: status_code
+            expected: 200
+            description: HTTP 状态码为 200。
+        fixture_requirements:
+          - reference: demo-existing-item
+            kind: database
+            description: 使用本地安全 Fixture 解析一个虚构的已存在资源 ID。
+            resolution: local_token
+            token: $DB_FIXTURE[existing:tb_demo:id]
+      - point_id: DEMO-GET-002
+        description: 不存在资源返回资源不存在响应。
+        category: negative
+        required_assertions:
+          - assertion_id: DEMO-GET-002-A
+            type: status_code
+            expected: 404
+            description: HTTP 状态码为 404。
+        fixture_requirements:
+          - reference: demo-absent-item
+            kind: database
+            description: 使用本地安全 Fixture 解析一个虚构的不存在资源 ID。
+            resolution: local_token
+            token: $DB_FIXTURE[absent:tb_demo:id]
+      - point_id: DEMO-GET-003
+        description: 请求过程产生可观察的查询记录。
+        category: contract
+        verification_mode: observation
+        observation_requirements:
+          - 记录本次请求是否产生一次目标查询调用。
+        preconditions:
+          - 准备可观察的查询调用记录。
+        fixture_requirements:
+          - reference: demo-query-observation
+            kind: observation
+            description: 人工观察虚构接口的查询调用记录。
+            resolution: manual_observation

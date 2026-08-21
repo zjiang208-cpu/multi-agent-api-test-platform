@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from evals.input_audit import audit_input_payload
+from evals.models import EvalSample
+from evals.recovery.models import RecoveryMutationSpec
+from app.workflow.prompts import WORKFLOW_PROMPT_VERSION
+from evals.runner import load_samples
+
+
+PROMPT_VERSION = WORKFLOW_PROMPT_VERSION
+
+
+def _snapshot_case_ids(snapshot_roots: list[Path], operation_id: str) -> set[str]:
+    case_ids: set[str] = set()
+    for root in snapshot_roots:
+        for path in root.glob("projects/*/artifacts/workflow-runs/*.yaml"):
+            payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            if payload.get("operation_id") != operation_id:
+                continue
+            for case in (payload.get("draft_cases") or {}).get("cases", []):
+                if case.get("case_id"):
+                    case_ids.add(str(case["case_id"]))
+    return case_ids
+
+
+def _build_plan(
+    sample: EvalSample,
+    *,
+    available_case_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    candidates = [
+        case
+        for case in sample.cases
+        if available_case_ids is None or case.case_id in available_case_ids
+    ]
+    if not candidates:
+        raise ValueError(f"no snapshot draft case is available: {sample.operation_id}")
+    candidates = [case for case in candidates if case.test_point_ids]
+    if not candidates:
+        raise ValueError(f"available cases have no test point references: {sample.operation_id}")
+    target_case = min(
+        candidates,
+        key=lambda case: (len(case.test_point_ids), case.case_id),
+    )
+    mutation = RecoveryMutationSpec(
+        mutation_id=f"delete-case:{target_case.case_id}:recovery",
+        kind="delete_case",
+        target_case_id=target_case.case_id,
+        target_test_point_ids=list(dict.fromkeys(target_case.test_point_ids)),
+        description=(
+            f"删除 {target_case.case_id}，验证 Reviewer 是否发现并由 Supplement 恢复 "
+            f"Test Point {target_case.test_point_ids}。"
+        ),
+    )
+    return {
+        "operation_id": sample.operation_id,
+        "base_sample": sample.sample_id,
+        "prompt_version": PROMPT_VERSION,
+        "status": "prepared_for_recovery_run",
+        "notes": (
+            "第一版 Recovery 只注入单一删除 Case 缺口，隔离 Reviewer 检测、"
+            "Supplement 补例和 Final Validator 恢复效果。"
+        ),
+        "mutation": mutation.model_dump(mode="json"),
+    }
+
+
+def build(
+    input_path: Path,
+    output_root: Path,
+    *,
+    snapshot_roots: list[Path],
+) -> int:
+    samples, _ = load_samples(input_path, require_redacted=True)
+    output_root.mkdir(parents=True, exist_ok=True)
+    plans_dir = output_root / "plans"
+    bases_dir = output_root / "bases"
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    bases_dir.mkdir(parents=True, exist_ok=True)
+
+    operations: list[dict[str, Any]] = []
+    for sample in samples:
+        available = _snapshot_case_ids(snapshot_roots, sample.operation_id)
+        if not available:
+            operations.append(
+                {
+                    "operation_id": sample.operation_id,
+                    "status": "pending_input",
+                    "reason": "no private workflow snapshot with draft_cases",
+                }
+            )
+            continue
+        plan = _build_plan(sample, available_case_ids=available)
+        plan_path = plans_dir / f"{sample.operation_id}.yaml"
+        base_path = bases_dir / f"{sample.operation_id}-base-redacted.json"
+        plan_path.write_text(
+            yaml.safe_dump(plan, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        payload = {"samples": [sample.model_dump(mode="json")]}
+        audit = audit_input_payload(payload)
+        if audit["status"] != "ready":
+            raise ValueError(f"recovery base failed redaction audit: {sample.operation_id}")
+        base_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        operations.append(
+            {
+                "operation_id": sample.operation_id,
+                "status": "prepared",
+                "mutation_count": 1,
+                "plan": str(plan_path),
+                "base": str(base_path),
+            }
+        )
+
+    summary = {
+        "status": "prepared",
+        "input": str(input_path),
+        "prompt_version": PROMPT_VERSION,
+        "operations": operations,
+    }
+    (output_root / "generation-summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print(json.dumps(summary, ensure_ascii=False))
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="生成 Supplement Recovery 脱敏输入计划")
+    parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--snapshot-root", type=Path, action="append", required=True)
+    args = parser.parse_args()
+    return build(args.input, args.output_root, snapshot_roots=args.snapshot_root)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

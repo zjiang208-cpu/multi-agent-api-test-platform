@@ -175,7 +175,7 @@ $env:DEEPSEEK_API_KEY = "只在本机设置，不要提交到仓库"
 
 最近一次本地验证结果：
 
-- Backend：`118 passed`
+- Backend：`133 passed`
 - Backend coverage：`77%`（branch coverage，CI 门槛 `75%`）
 - Frontend：`npm run build` 构建成功
 - CI：推送和 Pull Request 会分别执行后端测试与前端构建，配置见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。
@@ -197,6 +197,20 @@ $env:E2E_SUT_BASE_URL = "http://127.0.0.1:18281"
 cd ..\frontend
 npm run build
 ```
+
+## 离线 LLM 质量评测
+
+项目提供了独立的离线评测框架，覆盖 NLU、Designer、Reviewer 和 Telemetry：
+
+- NLU：Test Point Recall、Precision 和 Hallucination Rate；
+- Designer：Test Point Coverage、Assertion Coverage、Executable Case Rate 和 Duplicate Rate；
+- Reviewer：通过删除用例、删除断言、重复用例和 Expected 篡改等 Mutation 计算 Gap Recall/Precision；
+- Telemetry：聚合首轮成功、Repair/Retry、阶段耗时和 Token 使用；
+- Ablation：对比 Designer、Reviewer、Supplement 和 Local Rules 变体。
+
+评测只对人工确认的 Ground Truth 计算质量指标，不使用 Reviewer 自评或 LLM-as-a-Judge 作为第一版核心指标。未完成标注时，报告保持 `pending_annotation`，不会编造分数；人工确认的模型漏测通过 `reviewed_missing_assertion_ids` 显式登记，仍按未匹配断言计入覆盖率分母。
+
+评测框架、数据契约和标注方式见 [`evals/README.md`](evals/README.md) 与 [`docs/evaluation.md`](docs/evaluation.md)。真实需求、业务数据、模型原始输出和评测报告只保留在本地忽略目录。
 
 ## 安全边界与当前限制
 

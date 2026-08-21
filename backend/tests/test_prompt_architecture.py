@@ -15,17 +15,17 @@ def test_three_api_prompt_files_are_independently_versioned_and_hashed():
         "reviewer",
     }
     assert {name: prompt.definition.version for name, prompt in prompts.items()} == {
-        "nlu": "1.5.4",
-        "designer": "1.5.6",
-        "reviewer": "1.3.7",
+        "nlu": "1.5.9",
+        "designer": "1.6.0",
+        "reviewer": "1.4.0",
     }
     assert all(len(prompt.sha256) == 64 for prompt in prompts.values())
     assert len({prompt.source_path for prompt in prompts.values()}) == 3
-    assert prompt_manifest()["reviewer_prompt_version"] == "1.3.7"
+    assert prompt_manifest()["reviewer_prompt_version"] == "1.4.0"
     assert prompts["designer"].definition.retry.max_attempts == 2
     assert prompts["reviewer"].definition.retry.max_attempts == 2
     assert prompts["nlu"].definition.retry.max_attempts == 2
-    assert len(prompts["nlu"].definition.few_shot_examples) == 2
+    assert len(prompts["nlu"].definition.few_shot_examples) == 3
     assert len(prompts["designer"].definition.few_shot_examples) == 2
     assert "Few-Shot 示例" in prompts["designer"].system_prompt
     assert "资深的接口测试需求分析师兼测试开发工程师" in prompts["nlu"].system_prompt
@@ -33,6 +33,15 @@ def test_three_api_prompt_files_are_independently_versioned_and_hashed():
     assert "证据优先级固定为" in prompts["nlu"].system_prompt
     assert "source_document 可能包含多份文档和多个接口" in prompts["nlu"].system_prompt
     assert "没有需求文档时" in prompts["nlu"].system_prompt
+    assert "非数字字面量" in prompts["nlu"].system_prompt
+    assert "integer 参数收到非数字字面量" in prompts["nlu"].system_prompt
+    assert "JSON 无法解析" in prompts["nlu"].system_prompt
+    assert "参数类型等价类只能追加" in prompts["nlu"].system_prompt
+    assert "success 字段不等于 true" in prompts["nlu"].system_prompt
+    assert "json_value($.success) != true" in prompts["designer"].system_prompt
+    assert "不能自动代表“失败/拒绝”" in prompts["reviewer"].system_prompt
+    assert "多个可观测条件必须全部转成断言" in prompts["designer"].system_prompt
+    assert "多个字段/状态条件" in prompts["reviewer"].system_prompt
     assert "文档明确“不使用 Bearer”时不得补写 Bearer" in prompts["nlu"].system_prompt
     assert "auth_protocol" in prompts["nlu"].system_prompt
     assert "$AUTH_FIXTURE[...]" in prompts["nlu"].system_prompt
@@ -40,7 +49,7 @@ def test_three_api_prompt_files_are_independently_versioned_and_hashed():
     assert "资深的接口自动化测试开发工程师" in prompts["designer"].system_prompt
     assert "输入优先级固定为" in prompts["designer"].system_prompt
     assert "过期/不存在 Token" in prompts["designer"].system_prompt
-    assert "无法取得具体值时不生成该 Case" in prompts["designer"].system_prompt
+    assert "无法取得具体值时不得生成 Case" in prompts["designer"].system_prompt
     assert "## 用例设计方法论" in prompts["designer"].system_prompt
     assert "显式验证点优先映射" in prompts["designer"].system_prompt
     assert "专项场景触发规则" in prompts["designer"].system_prompt
@@ -199,3 +208,65 @@ def test_validator_accepts_non_existence_and_rejects_unsupported_jsonpath_assert
 
     assert not any("json_exists only supports" in error for error in errors)
     assert any("unsupported path expression" in error for error in errors)
+
+
+def test_validator_rejects_unproven_json_negation_and_accepts_explicit_presence_check():
+    operation = OperationContract(
+        operation_id="get-item",
+        method="GET",
+        path="/items",
+        responses=[{"status_code": 200}],
+    )
+    case = CaseModel(
+        case_id="CASE-UNPROVEN-NEGATION",
+        requirement_id="REQ-ITEM",
+        test_point_ids=["TP-ITEM"],
+        title="Unproven JSON negation",
+        category="negative",
+        steps=["Send the request"],
+        expected_behavior="The request is rejected.",
+        request={"method": "GET", "path": "/items"},
+        assertions=[
+            Assertion(
+                assertion_id="ASSERT-NOT-SUCCESS",
+                type="json_value",
+                path="$.success",
+                expected=True,
+                operator="ne",
+                evidence_refs=["E-CONTRACT"],
+            )
+        ],
+        evidence_refs=["E-CONTRACT"],
+    )
+
+    errors = validate_case(
+        case,
+        known_test_points={"TP-ITEM"},
+        known_evidence={"E-CONTRACT"},
+        operation=operation,
+    )
+
+    assert any("requires an explicit json_exists=true" in error for error in errors)
+
+    closed_case = case.model_copy(
+        update={
+            "assertions": [
+                Assertion(
+                    assertion_id="ASSERT-SUCCESS-EXISTS",
+                    type="json_exists",
+                    path="$.success",
+                    expected=True,
+                    evidence_refs=["E-CONTRACT"],
+                ),
+                *case.assertions,
+            ]
+        }
+    )
+    closed_errors = validate_case(
+        closed_case,
+        known_test_points={"TP-ITEM"},
+        known_evidence={"E-CONTRACT"},
+        operation=operation,
+    )
+
+    assert not any("requires an explicit json_exists=true" in error for error in closed_errors)

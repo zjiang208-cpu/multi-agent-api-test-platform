@@ -1,0 +1,122 @@
+{
+  "samples": [
+    {
+      "sample_id": "offline-smoke-full",
+      "operation_id": "demo-get-item",
+      "variant": "full",
+      "known_evidence_ids": ["EVIDENCE-REDACTED-1"],
+      "test_points": [
+        {"point_id": "TP-1", "title": "合法资源返回成功", "category": "positive"},
+        {"point_id": "TP-2", "title": "不存在资源返回 404", "category": "negative"},
+        {"point_id": "TP-3", "title": "查询调用可观察", "category": "contract"}
+      ],
+      "cases": [
+        {
+          "case_id": "CASE-1",
+          "test_point_ids": ["TP-1"],
+          "assertions": [{"assertion_id": "A-1", "type": "status_code", "expected": 200}],
+          "request": {"method": "GET", "path": "/demo/items/<existing-fixture-id>"},
+          "evidence_refs": ["EVIDENCE-REDACTED-1"],
+          "executable": true
+        },
+        {
+          "case_id": "CASE-2",
+          "test_point_ids": ["TP-2"],
+          "assertions": [{"assertion_id": "A-2", "type": "status_code", "expected": 404}],
+          "request": {"method": "GET", "path": "/demo/items/<absent-fixture-id>"},
+          "executable": true
+        },
+        {
+          "case_id": "CASE-3",
+          "test_point_ids": ["TP-3"],
+          "assertions": [{"assertion_id": "A-3", "type": "status_code", "expected": 200}],
+          "request": {"method": "GET", "path": "/demo/items/<existing-fixture-id>"},
+          "evidence_refs": ["EVIDENCE-REDACTED-1"],
+          "executable": true
+        }
+      ],
+      "reviewer_output": {},
+      "annotations": {
+        "point_matches": [
+          {"generated_point_id": "TP-1", "ground_truth_point_id": "DEMO-GET-001", "supported": true},
+          {"generated_point_id": "TP-2", "ground_truth_point_id": "DEMO-GET-002", "supported": true},
+          {"generated_point_id": "TP-3", "ground_truth_point_id": "DEMO-GET-003", "supported": true}
+        ],
+        "assertion_matches": [
+          {"case_id": "CASE-1", "generated_assertion_id": "A-1", "ground_truth_assertion_id": "DEMO-GET-001-A"},
+          {"case_id": "CASE-2", "generated_assertion_id": "A-2", "ground_truth_assertion_id": "DEMO-GET-002-A"}
+        ]
+      },
+      "telemetry": [
+        {"stage": "nlu", "attempt": 1, "duration_ms": 100, "status": "success", "mode": "generate", "prompt_tokens": 120, "completion_tokens": 80},
+        {"stage": "designer", "attempt": 1, "duration_ms": 150, "status": "error", "mode": "generate", "prompt_tokens": 160, "completion_tokens": 20, "error_category": "synthetic_validation"},
+        {"stage": "designer", "attempt": 2, "duration_ms": 90, "status": "success", "mode": "repair", "prompt_tokens": 70, "completion_tokens": 40},
+        {"stage": "reviewer", "attempt": 1, "duration_ms": 80, "status": "success", "mode": "generate", "prompt_tokens": 100, "completion_tokens": 30}
+      ],
+      "metadata": {"sample_origin": "synthetic-redacted"}
+    },
+    {
+      "sample_id": "offline-smoke-reviewer-duplicate",
+      "operation_id": "demo-get-item",
+      "variant": "reviewer_mutation",
+      "test_points": [
+        {"point_id": "TP-1", "title": "合法资源返回成功", "category": "positive"},
+        {"point_id": "TP-2", "title": "不存在资源返回 404", "category": "negative"},
+        {"point_id": "TP-3", "title": "查询调用可观察", "category": "contract"}
+      ],
+      "cases": [
+        {
+          "case_id": "CASE-1",
+          "test_point_ids": ["TP-1"],
+          "assertions": [{"assertion_id": "A-1", "type": "status_code", "expected": 200}],
+          "request": {"method": "GET", "path": "/demo/items/<existing-fixture-id>"},
+          "executable": true
+        },
+        {
+          "case_id": "CASE-1__duplicate",
+          "test_point_ids": ["TP-1"],
+          "assertions": [{"assertion_id": "A-1", "type": "status_code", "expected": 200}],
+          "request": {"method": "GET", "path": "/demo/items/<existing-fixture-id>"},
+          "executable": true
+        },
+        {
+          "case_id": "CASE-2",
+          "test_point_ids": ["TP-2"],
+          "assertions": [{"assertion_id": "A-2", "type": "status_code", "expected": 404}],
+          "request": {"method": "GET", "path": "/demo/items/<absent-fixture-id>"},
+          "executable": true
+        },
+        {
+          "case_id": "CASE-3",
+          "test_point_ids": ["TP-3"],
+          "assertions": [{"assertion_id": "A-3", "type": "status_code", "expected": 200}],
+          "request": {"method": "GET", "path": "/demo/items/<existing-fixture-id>"},
+          "executable": true
+        }
+      ],
+      "reviewer_output": {"duplicate_case_ids": ["CASE-1", "CASE-1__duplicate"]},
+      "annotations": {
+        "point_matches": [
+          {"generated_point_id": "TP-1", "ground_truth_point_id": "DEMO-GET-001", "supported": true},
+          {"generated_point_id": "TP-2", "ground_truth_point_id": "DEMO-GET-002", "supported": true},
+          {"generated_point_id": "TP-3", "ground_truth_point_id": "DEMO-GET-003", "supported": true}
+        ],
+        "assertion_matches": [
+          {"case_id": "CASE-1", "generated_assertion_id": "A-1", "ground_truth_assertion_id": "DEMO-GET-001-A"},
+          {"case_id": "CASE-2", "generated_assertion_id": "A-2", "ground_truth_assertion_id": "DEMO-GET-002-A"}
+        ]
+      },
+      "mutation": {
+        "mutation_id": "duplicate-case:CASE-1",
+        "kind": "duplicate_case",
+        "reviewer_field": "duplicate_case_ids",
+        "target_ids": ["CASE-1", "CASE-1__duplicate"],
+        "description": "复制合成样例中的 CASE-1，制造重复用例缺陷。"
+      },
+      "telemetry": [
+        {"stage": "reviewer", "attempt": 1, "duration_ms": 60, "status": "success", "mode": "generate", "prompt_tokens": 90, "completion_tokens": 25}
+      ],
+      "metadata": {"sample_origin": "synthetic-redacted"}
+    }
+  ]
+}

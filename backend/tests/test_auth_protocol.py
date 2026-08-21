@@ -129,7 +129,7 @@ def test_auth_fixture_provider_exposes_nonexistent_and_configured_expired_tokens
 
 
 def test_auth_fixture_provider_exposes_safe_valid_provider_readiness(monkeypatch):
-    monkeypatch.setenv("TEST_LOGIN_PHONE", "13800000000")
+    monkeypatch.setenv("TEST_LOGIN_PHONE", "test-login-phone")
     operation = _operation().model_copy(update={"contract_metadata": {"auth_required": True}})
     settings = ProjectSettings(
         sut_target={"base_url": "http://127.0.0.1:8081"},
@@ -142,5 +142,22 @@ def test_auth_fixture_provider_exposes_safe_valid_provider_readiness(monkeypatch
 
     valid = next(fact for fact in facts if fact.source_type == "auth_provider")
     assert valid.metadata == {"auth_mode": "automatic", "credential_kind": "valid"}
-    assert "13800000000" not in valid.fact
+    assert "test-login-phone" not in valid.fact
     assert "literal Authorization" in valid.fact
+
+
+def test_auth_fixture_provider_exposes_explicit_environment_token_readiness(monkeypatch):
+    monkeypatch.setenv("API_TEST_AUTH_TOKEN", "local-only-token")
+    operation = _operation().model_copy(update={"contract_metadata": {"auth_required": True}})
+    settings = ProjectSettings(
+        sut_target={"base_url": "http://127.0.0.1:8081"},
+        auth_provider={"enabled": True, "kind": "sms"},
+    )
+    facts = AuthFixtureEvidenceProvider().retrieve(
+        EvidenceContext(project_id="project-auth", operation=operation, settings=settings),
+        EvidenceQuery(),
+    )
+
+    valid = next(fact for fact in facts if fact.source_type == "auth_provider")
+    assert valid.metadata == {"auth_mode": "automatic", "credential_kind": "valid"}
+    assert "local-only-token" not in valid.fact

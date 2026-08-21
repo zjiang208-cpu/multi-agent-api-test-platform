@@ -61,7 +61,7 @@ class TestPointGenerator:
                         params=[parameter.name],
                     )
                 )
-            for key, value in parameter.constraints.items():
+            for key, value in cls._constraint_entries(parameter.constraints):
                 values.append(
                     cls._point(
                         requirement,
@@ -101,6 +101,31 @@ class TestPointGenerator:
         return cls._deduplicate(values)
 
     @staticmethod
+    def _constraint_entries(constraints):
+        special = {"minimum", "exclusiveMinimum", "maximum", "exclusiveMaximum"}
+        if "exclusiveMinimum" in constraints and constraints["exclusiveMinimum"] is not False:
+            value = constraints["exclusiveMinimum"]
+            if value is True:
+                value = constraints.get("minimum")
+            if value is not None:
+                yield "exclusiveMinimum", value
+        elif "minimum" in constraints:
+            yield "minimum", constraints["minimum"]
+
+        if "exclusiveMaximum" in constraints and constraints["exclusiveMaximum"] is not False:
+            value = constraints["exclusiveMaximum"]
+            if value is True:
+                value = constraints.get("maximum")
+            if value is not None:
+                yield "exclusiveMaximum", value
+        elif "maximum" in constraints:
+            yield "maximum", constraints["maximum"]
+
+        for key, value in constraints.items():
+            if key not in special:
+                yield key, value
+
+    @staticmethod
     def _point(requirement, *, title, category, priority, action, expected, refs, params=None):
         return TestPoint(
             point_id="TP-" + re.sub(r"[^A-Za-z0-9]+", "-", title).strip("-").upper(),
@@ -124,4 +149,3 @@ class TestPointGenerator:
             seen.add(point.point_id)
             result.append(point)
         return result
-

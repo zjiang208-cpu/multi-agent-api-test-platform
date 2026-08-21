@@ -238,7 +238,7 @@ def test_provider_agent_does_not_retry_non_retryable_provider_errors():
 
 
 def test_case_prompts_publish_executor_constraints():
-    assert WORKFLOW_PROMPT_VERSION == "nlu:1.5.4|designer:1.5.6|reviewer:1.3.7"
+    assert WORKFLOW_PROMPT_VERSION == "nlu:1.5.9|designer:1.6.0|reviewer:1.4.0"
     assert len(PROMPT_MANIFEST["designer_prompt_sha256"]) == 64
     assert "status_code" in DESIGNER_AGENT_SYSTEM
     assert "mode=supplement" in DESIGNER_AGENT_SYSTEM

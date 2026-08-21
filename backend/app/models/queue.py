@@ -16,7 +16,6 @@ ProcessingStatus = Literal[
     "REVIEWING",
     "COMPLETED",
     "FAILED",
-    "BLOCKED",
     "SKIPPED",
 ]
 
@@ -34,7 +33,6 @@ QueueStatus = Literal[
     "WAITING_REQUIREMENT_APPROVAL",
     "READY_FOR_EXECUTION",
     "READY_WITH_SKIPS",
-    "BLOCKED",
     "SKIPPED",
     "FAILED",
     "CANCELLED",

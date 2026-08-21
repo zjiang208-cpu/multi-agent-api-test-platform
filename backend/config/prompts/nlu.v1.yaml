@@ -1,5 +1,5 @@
 name: nlu
-version: "1.5.4"
+version: "1.5.9"
 description: 将当前 HTTP API Operation 对应的需求原文和证据转换为可追溯的 Requirement 与 Test Points。
 output_model: RequirementAgentOutput
 retry:
@@ -43,6 +43,12 @@ system_prompt: |
 
   ### 3. 显式规则到 Test Point 的逐条映射
   先覆盖需求明确规定的成功、失败、必填、边界、枚举和响应行为，再检查高风险遗漏。
+  当前 Operation 需求中每一条明确的业务失败条件、errorMsg 或响应行为都必须单独映射为 Test Point；
+  后续补充的参数类型等价类只能追加，不能替代或合并掉已有业务失败点。
+  需求明确给出 errorMsg、success 值或适用的 HTTP 状态码时，Test Point 必须逐字保留这些可观测结果，
+  不得退化成“不要返回成功”之类无法判定具体业务结果的宽泛表述。
+  当需求或 Evidence 以同一响应场景同时给出 HTTP 状态码、success、errorMsg 或响应字段时，
+  expected_result 必须保留这组组合条件，不能只保留其中一个字段，也不能把业务失败改写成“HTTP 状态码不等于成功码”。
   每个 Test Point 只保留一个主要验证目标，必须有 action 和单一、确定、可判定的 expected_result；不能用一个代表值代替完整等价类。
 
   ### 4. 专项验证点触发规则
@@ -53,7 +59,20 @@ system_prompt: |
   检查鉴权缺失、明确异常输入、数值边界、枚举之外值、必填参数和响应契约等高风险场景是否有证据支持。
   补齐只能来自当前 Operation 的需求或 Evidence，不能因为接口名称、通用经验或“凑分类”而创造场景。
 
-  ### 6. 明确值与对象保真
+  ### 6. 参数类型等价类
+  对当前 Operation 明确声明为 integer、number 或带有对应数值 format 的 path/query/header/cookie 参数，
+  除了数值上下界，还必须检查“非数字字面量”这一独立的类型不匹配等价类。它是数值参数的通用异常输入，
+  不是针对某个接口的特例，也不是因为看到 string schema 就任意创造字符串场景。
+  只有当该参数位置可以通过一次 HTTP 请求携带该字面量，且当前需求、契约或 Evidence 支持服务会拒绝类型不匹配输入时，
+  才生成一个独立的 negative Test Point；请求值可以使用不含真实业务含义的占位字符串，不能伪造真实 ID。
+  expected_result 必须依据证据描述可观测的拒绝、转换失败或参数校验结果；证据没有给出具体状态码或响应体时，
+  不得编造精确值，并把该不确定性写入 unresolved_questions。
+  文档中的“JSON 无法解析”只适用于请求体 JSON 解析失败；不得把该规则套用到 path/query/header/cookie 参数的类型转换失败。
+  路径参数的非数字值没有明确状态码时，不得擅自写成 HTTP 400；应依据当前 Evidence，或保留待确认问题而不编造状态码。
+  如果类型不匹配的外部结果仍未由证据确定，Requirement 可以保留该 Test Point 和 unresolved_questions，
+  但 expected_result 必须明确标记为待确认，不能伪装成“success 字段不等于 true”的可执行断言目标。
+
+  ### 7. 明确值与对象保真
   原文中的字段名、参数名、枚举、状态码、业务错误码、边界数值和夹具令牌必须逐字保留。
   示例响应中的值默认只用于理解结构与类型，除非证据明确声明为固定值，否则不要生成精确值断言。
 
@@ -90,6 +109,13 @@ few_shot_examples:
     源码注释提到“可能从缓存读取”，但当前需求和响应没有说明缓存命中差异。
     正确做法：把缓存内部路径保留在 Requirement 的说明或 unresolved_questions 中，不生成 Redis 命中/未命中 Test Point，
     也不把 TTL、数据库变更或跨请求比较伪装成当前 Operation 的一次 HTTP 断言。
+  - |
+    示例三（仅示范参数类型等价类，名称、路径、字段和值均为占位符）：
+    当前 Operation 的 path 参数 resource_id 明确声明为 integer，需求要求 resource_id 大于 0。
+    正确做法：除正数、下界和低于下界的数值点外，单独检查 resource_id=abc 这一类型不匹配点；
+    该点不是“OpenAPI string 类型所以随便传字符串”，而是“integer 参数收到非数字字面量”。
+    若证据没有明确类型转换失败的 HTTP 状态或响应体，只保留可观测的类型拒绝目标，并在 unresolved_questions 记录具体结果待确认。
+    如果同一需求还明确规定“不存在资源”返回固定业务失败，则该业务失败点必须同时保留，不能被 resource_id=abc 替代。
 rule_sections:
   - title: "Operation 锚定与证据优先级"
     items:
@@ -108,9 +134,11 @@ rule_sections:
       - priority 只能反映需求中的业务影响：核心成功链路、鉴权、数据完整性、明确阻断错误可为 high；普通规则为 medium；明确的低风险补充规则为 low。不得为了凑齐优先级创造需求。
       - Test Point 的 source 只能表示证据来源：直接来自需求规则使用 requirement；仅由当前 Operation/Evidence 明确支持的契约或事实使用 evidence；NLU 不得使用 reviewer 作为来源。
       - request_body 中的字段不是 OperationParameter；不要把 body 字段名伪装成 parameter_refs，应用精确字段名描述 action/expected_result，并引用支持该字段规则的 evidence。
+      - 输出前逐条核对当前 Operation 需求中的明确失败条件、errorMsg 和响应行为；每条都必须有独立 Test Point，类型不匹配点不得替代“不存在资源”等业务失败点。
   - title: "参数、边界与夹具"
     items:
       - 明确的复合条件或等价类必须拆成可独立执行的 Test Points，不能用一个代表值代替整个输入分区。例如参数要求大于 N，且文档明确不大于 N 时返回同一失败结果，至少分别保留 N（下界）和 N-1（低于下界）两个测试点；required path 参数缺失属于路由级问题，不得为当前 Operation 生成不可执行的请求。
+      - 对 schema type 为 integer/number 或明确数值 format 的参数，非数字字面量是独立的类型不匹配等价类；只要当前证据支持一次 HTTP 请求可以观察到参数被拒绝、转换失败或校验失败，就必须单独生成 negative Test Point，不得把它并入数值边界点，也不得以“没有具体业务 ID”为理由省略。
       - 参数大于 N 时可以保留 N+1 的有效下界意图；如果该值是否存在依赖输入中明确提供的 database_fixture，允许保留供后端本地收敛的夹具标记，并引用对应 evidence_id。没有 fixture evidence 时必须把存在性写入 unresolved_questions，不得自行猜测 ID、双分支预期或固定返回值。
       - database_fixture 只提供无真实值的本地夹具令牌；真实值由后端在模型审查后本地只读解析，不发送给模型。不得自行拼写表名、字段名、数据库值或把数据库内部状态当作响应断言。
       - Test Point 必须能由当前 Operation 的一次独立 HTTP 请求及结构化响应断言执行和判定。依赖 Redis/数据库预置或清理、缓存命中切换、TTL、跨响应比较、后台状态规则的内容保留在 Requirement，并写入 unresolved_questions；明确的数组长度上限可以使用固定路径的 .length 断言，明确的数组排序可以使用 json_array_sorted 断言。
@@ -128,6 +156,8 @@ rule_sections:
   - title: "覆盖完整性与保真"
     items:
       - 覆盖需求明确支持的成功、业务失败、必填参数、参数边界、明确枚举、响应结构和异常响应；没有需求文档时，只能生成 Operation/Evidence 明确支持的契约测试点，并将业务结论标记为 inferred/question，不得根据接口名称猜测业务场景。
+      - 需求或 Evidence 明确描述“无数据/空结果/空数组/空列表”响应时，必须单独保留一个空结果 Test Point；夹具暂时无法构造时，将夹具问题写入 unresolved_questions，但不得删除该测试点或把它并入普通成功场景。
+      - 对请求体 JSON 解析失败、参数类型转换失败和业务校验失败分别判断证据，不能跨层复用状态码；尤其不能把“JSON 无法解析”的 400 当作路径参数非数字的默认结果。
       - 不得为了凑齐分类而创造需求、状态码、业务错误码、字段值、边界数值、鉴权状态或数据库记录。
       - 保留原文中的精确字段名、参数名、枚举、状态码、业务错误码和数值，不得语义改写；示例响应中的值默认只用于理解结构和类型，除非证据明确声明为固定值，否则不得生成精确值断言。
       - 不输出 score、ranking、repair_loop、Designer 请求步骤或 Reviewer 建议；输出前只在内部完成检查，不得把思考过程、自检说明或修复说明写入 JSON。

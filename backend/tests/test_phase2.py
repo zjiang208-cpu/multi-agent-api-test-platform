@@ -153,6 +153,48 @@ GET /item-category/list?current=1
     assert operation["contract_metadata"]["document_operation_id"] == "ITEM-CATEGORY-001"
 
 
+def test_markdown_parameter_table_preserves_long_type_and_exclusive_lower_bound(tmp_path):
+    client = TestClient(create_app(settings=AppSettings(data_dir=tmp_path / "data")))
+    created = client.post("/api/projects", json=project_payload())
+    assert created.status_code == 201
+    project_id = created.json()["project_id"]
+    content = """
+# 查询商铺详情
+
+## 1. 基本信息
+
+| 项目 | 内容 |
+|---|---|
+| 接口编号 | `SHOP-001` |
+| 方法 | `GET` |
+| 路径 | `/shop/{id}` |
+| 权限 | 公开 |
+
+## 2. 路径参数
+
+| 参数 | 类型 | 必填 | 约束 |
+|---|---|---|---|
+| `id` | Long | 是 | 大于0的商铺ID |
+""".strip()
+
+    discovered = client.post(
+        f"/api/projects/{project_id}/requirement-documents/ingest-and-discover",
+        json={"filename": "get-shop.md", "content": content},
+    )
+
+    assert discovered.status_code == 200
+    parameter = discovered.json()["operations"][0]["parameters"][0]
+    assert parameter["name"] == "id"
+    assert parameter["type"] == "integer"
+    assert parameter["format"] == "int64"
+    assert parameter["required"] is True
+    assert parameter["description"] == "大于0的商铺ID"
+    assert parameter["constraints"] == {"minimum": 0, "exclusiveMinimum": True}
+    assert discovered.json()["operations"][0]["contract_metadata"]["parameter_source"] == (
+        "markdown_parameter_table"
+    )
+
+
 def test_uploading_second_requirement_document_retains_first_document_and_operations(tmp_path):
     client = TestClient(create_app(settings=AppSettings(data_dir=tmp_path / "data")))
     created = client.post("/api/projects", json=project_payload())
@@ -231,26 +273,26 @@ def test_processing_queue_accepts_only_one_operation_per_flow(tmp_path):
     assert project_cases.json() == []
 
 
-def test_blocked_processing_queue_can_be_skipped_through_api(tmp_path):
+def test_failed_processing_queue_can_be_skipped_through_api(tmp_path):
     settings = AppSettings(data_dir=tmp_path / "data")
     client = TestClient(create_app(settings=settings))
     created = client.post("/api/projects", json=project_payload())
     assert created.status_code == 201
     project_id = created.json()["project_id"]
     queue = ApiProcessingQueue(
-        run_id="queue-blocked-api",
+        run_id="queue-failed-api",
         project_id=project_id,
-        source_document_id="document-blocked-api",
-        selected_api_ids=["blocked-item"],
-        status="BLOCKED",
+        source_document_id="document-failed-api",
+        selected_api_ids=["failed-item"],
+        status="FAILED",
         items=[
             ApiProcessingItem(
-                api_operation_id="blocked-item",
+                api_operation_id="failed-item",
                 order=1,
-                status="BLOCKED",
+                status="FAILED",
                 current_stage="REVIEWER",
-                workflow_id="workflow-blocked-api",
-                final_case_set_id="final-blocked-api",
+                workflow_id="workflow-failed-api",
+                final_case_set_id="final-failed-api",
                 error_message="review gap",
             )
         ],
@@ -265,7 +307,7 @@ def test_blocked_processing_queue_can_be_skipped_through_api(tmp_path):
     assert response.status_code == 200
     assert response.json()["status"] == "SKIPPED"
     assert response.json()["items"][0]["status"] == "SKIPPED"
-    assert response.json()["items"][0]["workflow_id"] == "workflow-blocked-api"
+    assert response.json()["items"][0]["workflow_id"] == "workflow-failed-api"
 
 
 def test_requirement_document_upload_is_bounded(tmp_path):

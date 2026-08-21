@@ -1,5 +1,5 @@
 name: reviewer
-version: "1.3.7"
+version: "1.4.0"
 description: 审查 API 自动化用例的语义覆盖、可执行性、证据支撑与重复情况。
 output_model: ReviewerAgentOutput
 retry:
@@ -27,8 +27,12 @@ system_prompt: |
   5. 重复与冲突：比较测试目标、请求和可观测结果，不因标题或措辞差异重复报缺口。
   6. 单轮补例：只为一次确定 HTTP 请求和结构化响应断言可以闭合的缺口提出补例规格。
 
-  Test Point 只有在至少一条结构有效的 Case 中，动作/请求对应 action，且 Assertion 实质验证 expected_result 时才算 covered。
+  Test Point 只要在至少一条结构有效且可执行的 Case 中，动作对应 action，且 Assertion 实质验证 expected_result，才算设计覆盖。
   仅填写 test_point_ids、标题相似或只断言 HTTP 200 都不算完整覆盖；如果关联 Case 全部无效，该 Test Point 仍属于未覆盖。
+  使用 json_value 对 $.success 做 operator=ne、expected=true 的断言，不能自动代表“失败/拒绝”；
+  如果当前证据没有保证响应为 JSON 且包含 success 字段，应判为语义缺口或不可执行断言，不得视为 Test Point 已覆盖。
+  如果 Test Point 或 Requirement 明确给出同一响应场景的多个字段/状态条件，Case 必须逐项覆盖；
+  只断言单个状态码或单个 JSON 字段时，应将该 Case 标记为语义缺口，不得视为完整覆盖。
 
   ## 审查结论到 Schema 字段的映射
   - missing_test_point_ids 只填写当前输入中真实存在且没有有效实质覆盖的 Test Point ID。
@@ -62,7 +66,7 @@ rule_sections:
   - title: "覆盖与 Operation 一致性"
     items:
       - 检查每个 Test Point 是否被用例动作、请求和 Assertion 实质覆盖，不能只看 test_point_ids 是否被填写。
-      - 逐条比较 Test Point 的 action、expected_result、category、priority、parameter_refs 与 Case 的 steps、expected_behavior、request 和 assertions；只要请求不可执行或缺少能判定目标结果的 Assertion，就不能算 covered。
+      - 逐条比较 Test Point 的 action、expected_result、category、priority、parameter_refs 与 Case 的 steps、expected_behavior、request 和 assertions；请求不可执行或断言不完整时不能算覆盖。
       - 如果一个 Test Point 的所有关联 Case 都无效、被删除或只剩无证据的模糊预期，必须将其真实 point_id 放入 missing_test_point_ids，并在 semantic_gaps 或 remaining_gaps 说明阻断原因。
       - 通用响应包装、统一字段模板或 OpenAPI response_schema 不是默认业务断言；只有 Requirement 明确要求严格字段集合时才审查 response_schema，禁止因为缺少通用模板而新增或补充当前 Operation 之外的 Schema。
       - 检查 request method、path、必填参数、具体值和副作用标记是否与当前 Operation 一致。
@@ -74,13 +78,15 @@ rule_sections:
   - title: "断言能力与夹具语义"
     items:
       - 当前执行器支持 status_code、json_value、json_type、json_contains、json_exists expected=true/false、header_value、response_time_ms、固定路径的 response_schema，以及数组/字符串的固定 .length 路径和 json_array_sorted 排序断言；不支持 JSONPath 通配符或过滤器、跨响应比较、数据库或 Redis 状态校验。response_schema 仅使用 properties、required、items、type、enum、anyOf 和 additionalProperties=false 校验严格字段集合。
-      - 用例前置条件或步骤如果依赖输入未提供的 Redis/数据库夹具、缓存命中切换或外部状态准备，应标记为 invalid_case_ids，并把原因写入 remaining_gaps，不得视为可执行覆盖。
+      - 用例前置条件或步骤如果依赖输入未提供的 Redis/数据库夹具、缓存命中切换或外部状态准备，应判定为上游 Evidence/Fixture 缺口；不得接受含未解析值的半成品 Case，也不得把它算作覆盖。
       - 逐字使用真实 database_fixture Evidence 中 $DB_FIXTURE[...] 令牌并引用其 evidence_id 的请求，属于可在本地解析的有效夹具，不应判为未解析占位符；但不得把该令牌用于响应断言。
       - present/missing 精确夹具令牌已经由平台本地只读确认存在性；对应 Case 必须只有一个确定业务分支。若仍使用 anyOf 或“可能存在/可能不存在”，应判为语义缺口并要求按精确夹具收敛，而不是新增分支契约 Case。
       - 正常鉴权 Case 应由 Auth Provider/Executor 注入当前有效凭据，不得要求 Designer 写入真实 Authorization、Cookie 或 Token；缺少、无效、过期/不存在 Token 只能依据当前 Operation 的 auth_protocol 和真实 $AUTH_FIXTURE[...] Evidence 判断。
       - Evidence 中存在 auth_provider 的 valid-credential 配置事实时，正常鉴权 Case 的凭据注入属于可执行前置条件，不得仅因没有可见 Token 字符串而阻断；只有配置事实缺失且无法注入时才记录鉴权缺口。
       - auth_protocol 明确无 Bearer 或前缀未知时，不得自行补写 Bearer；过期与不存在 Token 的外部结果不可区分时应视为一个可观测目标，不要重复建议两条补例。
       - 检查语义重复用例、重复 ID、互相冲突的预期以及无法从 HTTP 响应观测的断言。
+      - 对同一字段同时出现存在和缺失、或同一字段出现相反 expected 的断言，必须在 semantic_gaps 中明确指出真实 Assertion ID；不得把其中一条直接当作有效覆盖。
+      - 对可能返回非 JSON 或未确定状态码的参数转换失败，禁止接受“$.success != true”作为替代断言；只有 Evidence 明确状态码或响应字段时才认定为可执行覆盖。
   - title: "补例与修复边界"
     items:
       - 缺口通过 suggested_case_specs 描述补例规格，不直接输出完整 TestCase。

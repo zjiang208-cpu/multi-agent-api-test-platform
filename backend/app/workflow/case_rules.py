@@ -5,14 +5,23 @@ import re
 from typing import Any
 
 from app.cases.validator import validate_case
-from app.models.cases import CaseSet, TestCase
+from app.models.cases import CaseSet, RequestTemplate, TestCase
 from app.models.requirements import RequirementDocument
+from app.models.testpoints import TestPoint
+from app.workflow.assertion_rules import enrich_case_assertions
 from app.workflow.models import ReviewerAgentOutput
 from app.workflow.state import WorkflowEvent, WorkflowState
 
 
 _EXACT_FIXTURE_IN_TEXT = re.compile(
     r"\$DB_FIXTURE\[(present|missing):([A-Za-z0-9_]+):([A-Za-z0-9_]+):(-?\d+)\]"
+)
+_STRING_LENGTH_IN_TEXT = re.compile(
+    r"(?P<field>[A-Za-z_][A-Za-z0-9_]*)[^\d\n]{0,60}?(?P<length>\d+)\s*个?\s*字符"
+)
+_STRING_LENGTH_REVERSED_IN_TEXT = re.compile(
+    r"长度[^\d\n]{0,20}?(?P<length>\d+)[^\d\n]{0,20}?"
+    r"(?P<field>[A-Za-z_][A-Za-z0-9_]*)\s*(?:字段|字符串)?"
 )
 
 
@@ -168,16 +177,67 @@ class CaseRulesMixin:
             request = request.model_copy(
                 update={"path_params": path_params, "query_params": query_params}
             )
+            request = CaseRulesMixin._normalize_string_length_boundaries(
+                request,
+                [
+                    points_by_id[point_id]
+                    for point_id in case.test_point_ids
+                    if point_id in points_by_id
+                ],
+            )
+            normalized_case = case.model_copy(
+                update={
+                    "evidence_refs": case_evidence_refs,
+                    "assertions": assertions,
+                    "request": request,
+                }
+            )
             normalized.append(
-                case.model_copy(
-                    update={
-                        "evidence_refs": case_evidence_refs,
-                        "assertions": assertions,
-                        "request": request,
-                    }
+                enrich_case_assertions(
+                    normalized_case,
+                    [
+                        points_by_id[point_id]
+                        for point_id in normalized_case.test_point_ids
+                        if point_id in points_by_id
+                    ],
                 )
             )
         return normalized
+
+    @staticmethod
+    def _normalize_string_length_boundaries(
+        request: RequestTemplate,
+        points: list[TestPoint],
+    ) -> RequestTemplate:
+        """将模型声称的字符串边界值校准为精确长度。
+
+        设计器有时会生成“32 个字符”的语义，但请求体中的示例值实际为
+        31 或 33 个字符。这里根据关联测试点的自然语言约束做确定性校准，
+        不绑定具体接口或字段名，也不改变缺少该字段的请求。
+        """
+
+        if not isinstance(request.body, dict):
+            return request
+        targets: dict[str, int] = {}
+        for point in points:
+            for text in (point.action, point.title, point.expected_result):
+                for pattern in (_STRING_LENGTH_IN_TEXT, _STRING_LENGTH_REVERSED_IN_TEXT):
+                    for match in pattern.finditer(text):
+                        targets.setdefault(match.group("field"), int(match.group("length")))
+        if not targets:
+            return request
+
+        body = dict(request.body)
+        changed = False
+        for field, length in targets.items():
+            value = body.get(field)
+            if not isinstance(value, str):
+                continue
+            normalized = value[:length].ljust(length, "x")
+            if normalized != value:
+                body[field] = normalized
+                changed = True
+        return request.model_copy(update={"body": body}) if changed else request
 
     @staticmethod
     def _validate_cases(cases: list[TestCase], state: WorkflowState, *, source: str) -> None:
@@ -268,6 +328,30 @@ class CaseRulesMixin:
         return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
 
     @staticmethod
+    def _case_execution_key(case: TestCase) -> str:
+        """识别实际请求和断言完全相同、但测试点不同的冗余用例。"""
+
+        value = {
+            "request": case.request.model_dump(mode="json"),
+            "assertions": sorted(
+                [
+                    {
+                        "type": assertion.type,
+                        "path": assertion.path,
+                        "expected": assertion.expected,
+                        "operator": assertion.operator,
+                    }
+                    for assertion in case.assertions
+                ],
+                key=lambda item: json.dumps(
+                    item, ensure_ascii=False, sort_keys=True, default=str
+                ),
+            ),
+            "side_effect": case.side_effect,
+        }
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+    @staticmethod
     def _update(
         state: WorkflowState,
         *,
@@ -286,4 +370,3 @@ class CaseRulesMixin:
             **({"status": status} if status else {}),
             "events": [*state.get("events", []), event],
         }
-

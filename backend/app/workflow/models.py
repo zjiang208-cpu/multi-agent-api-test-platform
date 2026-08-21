@@ -56,6 +56,11 @@ class ReviewerAgentOutput(StrictModel):
 
         if isinstance(value, dict) and "supplemental_cases" in value:
             value = {key: item for key, item in value.items() if key != "supplemental_cases"}
+        # DeepSeek 偶尔会附带未纳入协议的说明字段；该字段不参与评审结果。
+        if isinstance(value, dict) and "unresolved_questions_note" in value:
+            value = {
+                key: item for key, item in value.items() if key != "unresolved_questions_note"
+            }
         return value
 
 
