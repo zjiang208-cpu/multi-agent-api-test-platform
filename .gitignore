@@ -30,6 +30,7 @@ evals/datasets/**/manifest.yaml
 evals/datasets/**/requirements_catalog.yaml
 evals/datasets/**/samples/
 evals/datasets/**/raw/
+evals/datasets/**/sources/
 evals/datasets/**/pilots/
 output/
 tmp/

@@ -1,6 +1,6 @@
 dataset_id: baseline_v1
 version: 1.0.0
-source: local-only:baseline_fresh_metrics_20260817_020506.json
+source: local-only:evals/datasets/baseline_v1/sources/baseline_fresh_metrics_20260817_020506.json
 annotation_status: pending
 # Explicit observed snapshot ID -> canonical dataset ID mappings only.
 operation_id_aliases: {}

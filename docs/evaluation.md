@@ -121,7 +121,7 @@ python -m evals.requirements_catalog `
 
 ```powershell
 python -m evals.runner `
-  --scaffold-from-baseline baseline_fresh_metrics_20260817_020506.json `
+  --scaffold-from-baseline evals/datasets/baseline_v1/sources/baseline_fresh_metrics_20260817_020506.json `
   --catalog evals/datasets/baseline_v1/requirements_catalog.yaml `
   --manifest-output evals/datasets/baseline_v1/manifest.yaml
 ```

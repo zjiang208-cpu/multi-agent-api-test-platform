@@ -221,12 +221,12 @@ npm run build
 - 平台不会导入或执行被测项目代码；
 - 当前 LLM 配置以 DeepSeek 为默认实现，其他模型服务商尚未做成通用配置界面。
 
-更多安全约束见 [`SECURITY.md`](SECURITY.md)，架构和实现边界见 [`CURRENT_ARCHITECTURE.md`](CURRENT_ARCHITECTURE.md)，
-后续演进记录见 [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md)。
+更多安全约束见 [`SECURITY.md`](SECURITY.md)，架构和实现边界见 [`docs/architecture/current-architecture.md`](docs/architecture/current-architecture.md)，
+后续演进记录见 [`docs/architecture/migration-plan.md`](docs/architecture/migration-plan.md)。
 
 ## 项目文档
 
 - [`docs/workflow.md`](docs/workflow.md)：完整产品流程、截图索引和部署说明
-- [`CURRENT_ARCHITECTURE.md`](CURRENT_ARCHITECTURE.md)：当前架构与实现边界
+- [`docs/architecture/current-architecture.md`](docs/architecture/current-architecture.md)：当前架构与实现边界
 - [`SECURITY.md`](SECURITY.md)：安全基线
-- [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md)：后续演进记录
+- [`docs/architecture/migration-plan.md`](docs/architecture/migration-plan.md)：后续演进记录
