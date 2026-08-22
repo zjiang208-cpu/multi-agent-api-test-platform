@@ -18,6 +18,50 @@ def _metric(numerator: int, denominator: int) -> dict[str, Any]:
     return ratio(numerator, denominator)
 
 
+def _target_points_match(found: set[str], targets: set[str], target_match: str) -> bool:
+    return found == targets if target_match == "all" else bool(found & targets)
+
+
+def _defect_recovered(
+    sample: RecoveryEvalSample,
+    targets: set[str],
+    recovered: set[str],
+) -> bool:
+    mutation = sample.mutation
+    if mutation is None or not _target_points_match(
+        recovered,
+        targets,
+        mutation.target_match,
+    ):
+        return False
+    if mutation.kind == "delete_case":
+        return True
+
+    target_case = next(
+        (case for case in sample.final_cases if case.case_id == mutation.target_case_id),
+        None,
+    )
+    if target_case is None:
+        return False
+    request = target_case.request or {}
+    if mutation.kind == "remove_required_path_param":
+        return str(mutation.target_parameter_name) in (request.get("path_params") or {})
+    if mutation.kind == "remove_all_assertions":
+        assertion_ids = {str(assertion.assertion_id) for assertion in target_case.assertions}
+        return (
+            str(mutation.target_assertion_id) in assertion_ids
+            if mutation.target_assertion_id
+            else bool(assertion_ids)
+        )
+    if mutation.kind == "remove_auth_header":
+        headers = request.get("headers") or {}
+        return any(
+            str(name).lower() == str(mutation.target_header_name).lower()
+            for name in headers
+        )
+    return False
+
+
 def grade_recovery(sample: RecoveryEvalSample) -> dict[str, Any]:
     """Score detection and final quality recovery without judging free text."""
 
@@ -64,7 +108,8 @@ def grade_recovery(sample: RecoveryEvalSample) -> dict[str, Any]:
     recovered = final_points & targets
     extras = supplement_points - targets
     final_valid = sample.final_status == "READY" and not sample.final_assembly_errors
-    repair_success = bool(final_valid and recovered == targets)
+    defect_recovered = bool(final_valid and _defect_recovered(sample, targets, recovered))
+    repair_success = defect_recovered
     return {
         "status": "ready",
         "variant": "recovery_mutation",
@@ -79,6 +124,8 @@ def grade_recovery(sample: RecoveryEvalSample) -> dict[str, Any]:
         "supplement_target_recall": _metric(len(supplemented), len(targets)),
         "coverage_recovery": _metric(len(recovered), len(targets)),
         "final_validator_passed": final_valid,
+        "defect_recovered": defect_recovered,
+        "mutation_recovery_rate": _metric(int(defect_recovered), 1),
         "repair_success": repair_success,
         "repair_success_rate": _metric(int(repair_success), 1),
     }
@@ -106,6 +153,10 @@ def aggregate_recovery(samples: list[RecoveryEvalSample]) -> dict[str, Any]:
         "detection_rate": _metric(detected_count, target_count),
         "supplement_target_recall": _metric(supplemented_count, target_count),
         "recovery_rate": _metric(recovered_count, target_count),
+        "defect_recovery_rate": _metric(
+            sum(int(report["defect_recovered"]) for report in reports),
+            len(reports),
+        ),
         "repair_success_rate": _metric(
             sum(int(report["repair_success"]) for report in reports),
             len(reports),
@@ -125,6 +176,7 @@ def aggregate_recovery(samples: list[RecoveryEvalSample]) -> dict[str, Any]:
                 "kind": report["mutation_kind"],
                 "detection_rate": report["detection_rate"],
                 "coverage_recovery": report["coverage_recovery"],
+                "defect_recovered": report["defect_recovered"],
                 "repair_success": report["repair_success"],
             }
             for report in reports

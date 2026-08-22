@@ -2,5 +2,7 @@ dataset_id: baseline_v1
 version: 1.0.0
 source: local-only:baseline_fresh_metrics_20260817_020506.json
 annotation_status: pending
+# Explicit observed snapshot ID -> canonical dataset ID mappings only.
+operation_id_aliases: {}
 notes: Fill Ground Truth Test Points locally before changing annotation_status to verified.
 operations: []

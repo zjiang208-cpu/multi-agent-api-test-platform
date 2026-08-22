@@ -82,6 +82,8 @@ class EvalDatasetManifest(EvalModel):
     source: str
     annotation_status: AnnotationStatus = "pending"
     operations: list[GroundTruthOperation] = Field(default_factory=list)
+    # Explicit observed->canonical IDs for migrated snapshots. Never infer aliases.
+    operation_id_aliases: dict[str, str] = Field(default_factory=dict)
     notes: str | None = None
 
     @model_validator(mode="after")

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from evals.models import EvalModel, GeneratedCase, GeneratedReviewerOutput, TelemetryRecord
 
 
-RecoveryMutationKind = Literal["delete_case"]
+RecoveryMutationKind = Literal["delete_case", "remove_required_path_param", "remove_all_assertions", "remove_auth_header"]
 
 
 class RecoveryMutationSpec(EvalModel):
@@ -17,8 +17,19 @@ class RecoveryMutationSpec(EvalModel):
     kind: RecoveryMutationKind
     target_case_id: str
     target_test_point_ids: list[str] = Field(min_length=1)
+    target_parameter_name: str | None = None
+    target_assertion_id: str | None = None
+    target_header_name: str | None = None
     target_match: Literal["all", "any"] = "all"
     description: str
+
+    @model_validator(mode="after")
+    def validate_mutation_target(self) -> "RecoveryMutationSpec":
+        if self.kind == "remove_required_path_param" and not self.target_parameter_name:
+            raise ValueError("remove_required_path_param requires target_parameter_name")
+        if self.kind == "remove_auth_header" and not self.target_header_name:
+            raise ValueError("remove_auth_header requires target_header_name")
+        return self
 
 
 class RecoveryEvalSample(EvalModel):

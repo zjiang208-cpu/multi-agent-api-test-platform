@@ -14,6 +14,7 @@ from evals.graders.recovery import aggregate_recovery, grade_recovery
 from evals.graders.telemetry import aggregate_telemetry
 from evals.input_audit import audit_input_payload
 from evals.recovery.models import RecoveryEvalSample
+from evals.recovery.validation import validate_recovery_suite
 
 
 def _metric_text(metric: Any) -> str:
@@ -57,8 +58,11 @@ def build_report(dataset_path: Path, input_path: Path) -> dict[str, Any]:
         raise ValueError("recovery suite failed redaction audit")
     samples = [RecoveryEvalSample.model_validate(item) for item in payload.get("samples", [])]
     expected = {operation.operation_id for operation in manifest.operations}
-    observed = {sample.operation_id for sample in samples}
-    missing = sorted(expected - observed)
+    validation = validate_recovery_suite(
+        samples,
+        expected,
+        operation_id_aliases=getattr(manifest, "operation_id_aliases", {}),
+    )
     reports = [
         {
             "sample_id": sample.sample_id,
@@ -78,7 +82,7 @@ def build_report(dataset_path: Path, input_path: Path) -> dict[str, Any]:
         "dataset_id": manifest.dataset_id,
         "dataset_version": manifest.version,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "status": "ready" if samples and not missing else "pending_input",
+        "status": "ready" if samples and validation["status"] == "ready" else "pending_input",
         "component_eval": {
             "reviewer": {
                 "status": summary["status"],
@@ -100,10 +104,20 @@ def build_report(dataset_path: Path, input_path: Path) -> dict[str, Any]:
         "samples": reports,
         "source_summary": {
             "input": str(input_path),
-            "expected_operation_ids": sorted(expected),
-            "observed_operation_ids": sorted(observed),
-            "missing_operation_ids": missing,
-            "dataset_coverage_status": "ready" if not missing else "pending_input",
+            "expected_operation_ids": validation["expected_operation_ids"],
+            "observed_operation_ids": validation["observed_operation_ids"],
+            "missing_operation_ids": [
+                issue["operation_id"]
+                for issue in validation["issues"]
+                if issue["type"] == "missing_operation_id"
+            ],
+            "unexpected_operation_ids": [
+                issue["operation_id"]
+                for issue in validation["issues"]
+                if issue["type"] == "unexpected_operation_id"
+            ],
+            "dataset_coverage_status": validation["status"],
+            "input_validation": validation,
         },
     }
 

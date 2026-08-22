@@ -27,6 +27,7 @@ from evals.reviewer_runner import reviewer_telemetry
 from evals.recovery.models import RecoveryEvalSample, RecoveryMutationSpec
 from evals.environment import hydrate_environment_from_project_config
 from evals.recovery.runtime import mutate_recovery_cases, reviewer_summary
+from evals.recovery.validation import canonical_operation_id
 from evals.runner import load_samples
 
 
@@ -43,10 +44,14 @@ def _validate_inputs(
     snapshot: WorkflowRunSnapshot,
     base_sample: EvalSample,
     plan: dict[str, Any],
+    *,
+    operation_id_aliases: dict[str, str] | None = None,
 ) -> RecoveryMutationSpec:
     if not all([snapshot.requirement, snapshot.evidence, snapshot.test_points, snapshot.draft_cases]):
         raise ValueError("workflow snapshot lacks Recovery input fields")
-    if snapshot.operation_id != base_sample.operation_id:
+    if canonical_operation_id(snapshot.operation_id, operation_id_aliases) != canonical_operation_id(
+        base_sample.operation_id, operation_id_aliases
+    ):
         raise ValueError("workflow snapshot and redacted sample operation_id differ")
     plan_version = str(plan.get("prompt_version") or "")
     if plan_version and plan_version != WORKFLOW_PROMPT_VERSION:
@@ -127,9 +132,15 @@ def run_recovery_sample(
     plan: dict[str, Any],
     data_dir: Path,
     mutation: RecoveryMutationSpec | None,
+    operation_id_aliases: dict[str, str] | None = None,
 ) -> RecoveryEvalSample:
     if mutation is not None:
-        _validate_inputs(snapshot, base_sample, plan)
+        _validate_inputs(
+            snapshot,
+            base_sample,
+            plan,
+            operation_id_aliases=operation_id_aliases,
+        )
         draft_cases = mutate_recovery_cases(snapshot.draft_cases, mutation)
         variant = "recovery_mutation"
         sample_id = f"{base_sample.sample_id}__{mutation.mutation_id.replace(':', '-')}"
@@ -197,6 +208,16 @@ def write_redacted_results(path: Path, samples: list[RecoveryEvalSample]) -> Non
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _load_operation_aliases(path: Path | None) -> dict[str, str]:
+    if path is None:
+        return {}
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw_aliases = payload.get("operation_id_aliases", payload) if isinstance(payload, dict) else None
+    if not isinstance(raw_aliases, dict):
+        raise ValueError("operation aliases file must contain a mapping")
+    return {str(key): str(value) for key, value in raw_aliases.items()}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="运行真实生产 Workflow 的 Supplement Recovery Eval")
     parser.add_argument("--snapshot", type=Path, required=True)
@@ -205,6 +226,7 @@ def main() -> int:
     parser.add_argument("--data-dir", type=Path, default=BACKEND_ROOT / ".data")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--operation-aliases", type=Path)
     args = parser.parse_args()
 
     loaded_environment_refs = hydrate_environment_from_project_config([args.data_dir])
@@ -221,7 +243,10 @@ def main() -> int:
     if len(samples) != 1:
         raise ValueError("Recovery Runner 要求基础文件恰好包含一个样本")
     plan = yaml.safe_load(args.plan.read_text(encoding="utf-8")) or {}
-    mutation = _validate_inputs(snapshot, samples[0], plan)
+    operation_id_aliases = _load_operation_aliases(args.operation_aliases)
+    mutation = _validate_inputs(
+        snapshot, samples[0], plan, operation_id_aliases=operation_id_aliases
+    )
     if args.dry_run:
         print(
             json.dumps(
@@ -241,6 +266,7 @@ def main() -> int:
         plan=plan,
         data_dir=args.data_dir.expanduser().resolve(),
         mutation=mutation,
+        operation_id_aliases=operation_id_aliases,
     )
     write_redacted_results(args.output, [result])
     completed = result.metadata.get("reviewer_run_status") == "completed"

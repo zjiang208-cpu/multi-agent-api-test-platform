@@ -19,6 +19,68 @@ def mutate_recovery_cases(cases: CaseSet, mutation: RecoveryMutationSpec) -> Cas
         raise ValueError(f"case not found in workflow snapshot: {mutation.target_case_id}")
     if mutation.kind == "delete_case":
         remaining = [case for case in cases.cases if case.case_id != target.case_id]
+    elif mutation.kind == "remove_required_path_param":
+        parameter_name = mutation.target_parameter_name
+        if parameter_name not in target.request.path_params:
+            raise ValueError(
+                f"path parameter {parameter_name} not found in {target.case_id}"
+            )
+        remaining = [
+            case.model_copy(
+                update={
+                    "request": case.request.model_copy(
+                        update={
+                            "path_params": {
+                                key: value
+                                for key, value in case.request.path_params.items()
+                                if key != parameter_name
+                            }
+                        }
+                    )
+                }
+            )
+            if case.case_id == target.case_id
+            else case
+            for case in cases.cases
+        ]
+    elif mutation.kind == "remove_all_assertions":
+        remaining = [
+            case.model_copy(update={"assertions": []})
+            if case.case_id == target.case_id
+            else case
+            for case in cases.cases
+        ]
+    elif mutation.kind == "remove_auth_header":
+        header_name = next(
+            (
+                name
+                for name in target.request.headers
+                if name.lower() == str(mutation.target_header_name).lower()
+            ),
+            None,
+        )
+        if header_name is None:
+            raise ValueError(
+                f"header {mutation.target_header_name} not found in {target.case_id}"
+            )
+        remaining = [
+            case.model_copy(
+                update={
+                    "request": case.request.model_copy(
+                        update={
+                            "headers": {
+                                key: value
+                                for key, value in case.request.headers.items()
+                                if key != header_name
+                            }
+                        }
+                    )
+                }
+            )
+            if case.case_id == target.case_id
+            else case
+            for case in cases.cases
+        ]
     else:
         raise ValueError(f"unsupported recovery mutation kind: {mutation.kind}")
     return cases.model_copy(deep=True, update={"cases": remaining})

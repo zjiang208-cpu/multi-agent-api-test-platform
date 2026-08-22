@@ -13,6 +13,7 @@ venv/
 .pytest_cache/
 # pytest 临时测试目录
 backend/.pytest-basetemp-*/
+.codex-pytest-temp/
 .mypy_cache/
 .ruff_cache/
 .coverage

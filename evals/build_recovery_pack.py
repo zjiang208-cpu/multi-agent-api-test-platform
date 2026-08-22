@@ -10,6 +10,7 @@ import yaml
 from evals.input_audit import audit_input_payload
 from evals.models import EvalSample
 from evals.recovery.models import RecoveryMutationSpec
+from evals.recovery.validation import operation_id_candidates
 from app.workflow.prompts import WORKFLOW_PROMPT_VERSION
 from evals.runner import load_samples
 
@@ -17,12 +18,12 @@ from evals.runner import load_samples
 PROMPT_VERSION = WORKFLOW_PROMPT_VERSION
 
 
-def _snapshot_case_ids(snapshot_roots: list[Path], operation_id: str) -> set[str]:
+def _snapshot_case_ids(snapshot_roots: list[Path], operation_ids: list[str]) -> set[str]:
     case_ids: set[str] = set()
     for root in snapshot_roots:
         for path in root.glob("projects/*/artifacts/workflow-runs/*.yaml"):
             payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            if payload.get("operation_id") != operation_id:
+            if payload.get("operation_id") not in operation_ids:
                 continue
             for case in (payload.get("draft_cases") or {}).get("cases", []):
                 if case.get("case_id"):
@@ -49,26 +50,72 @@ def _build_plan(
         candidates,
         key=lambda case: (len(case.test_point_ids), case.case_id),
     )
-    mutation = RecoveryMutationSpec(
-        mutation_id=f"delete-case:{target_case.case_id}:recovery",
-        kind="delete_case",
-        target_case_id=target_case.case_id,
-        target_test_point_ids=list(dict.fromkeys(target_case.test_point_ids)),
-        description=(
-            f"删除 {target_case.case_id}，验证 Reviewer 是否发现并由 Supplement 恢复 "
-            f"Test Point {target_case.test_point_ids}。"
-        ),
+    target_points = list(dict.fromkeys(target_case.test_point_ids))
+    request = target_case.request or {}
+    path_params = request.get("path_params") or {}
+    headers = request.get("headers") or {}
+    mutations = [
+        RecoveryMutationSpec(
+            mutation_id=f"delete-case:{target_case.case_id}:recovery",
+            kind="delete_case",
+            target_case_id=target_case.case_id,
+            target_test_point_ids=target_points,
+            description=(
+                f"删除 {target_case.case_id}，验证 Reviewer 是否发现并由 Supplement 恢复 "
+                f"Test Point {target_points}。"
+            ),
+        )
+    ]
+    if path_params:
+        parameter_name = sorted(path_params)[0]
+        mutations.append(
+            RecoveryMutationSpec(
+                mutation_id=f"remove-required-path-param:{target_case.case_id}:{parameter_name}:recovery",
+                kind="remove_required_path_param",
+                target_case_id=target_case.case_id,
+                target_test_point_ids=target_points,
+                target_parameter_name=parameter_name,
+                description=f"删除 {target_case.case_id} 的必填 path 参数 {parameter_name}。",
+            )
+        )
+    if target_case.assertions:
+        mutations.append(
+            RecoveryMutationSpec(
+                mutation_id=f"remove-all-assertions:{target_case.case_id}:recovery",
+                kind="remove_all_assertions",
+                target_case_id=target_case.case_id,
+                target_test_point_ids=target_points,
+                description=f"删除 {target_case.case_id} 的全部断言，制造不可验收用例。",
+            )
+        )
+    auth_header = next(
+        (name for name in headers if name.lower() == "authorization"),
+        None,
     )
+    if auth_header is not None:
+        mutations.append(
+            RecoveryMutationSpec(
+                mutation_id=f"remove-auth-header:{target_case.case_id}:recovery",
+                kind="remove_auth_header",
+                target_case_id=target_case.case_id,
+                target_test_point_ids=target_points,
+                target_header_name=auth_header,
+                description=f"删除 {target_case.case_id} 的鉴权头 {auth_header}。",
+            )
+        )
     return {
         "operation_id": sample.operation_id,
         "base_sample": sample.sample_id,
         "prompt_version": PROMPT_VERSION,
         "status": "prepared_for_recovery_run",
         "notes": (
-            "第一版 Recovery 只注入单一删除 Case 缺口，隔离 Reviewer 检测、"
-            "Supplement 补例和 Final Validator 恢复效果。"
+            "Recovery 对同一目标 Case 注入删除 Case、缺失路径参数、缺失断言和缺失鉴权头等"
+            "可导致覆盖缺口的故障；每种 Mutation 独立运行。"
         ),
-        "mutation": mutation.model_dump(mode="json"),
+        "mutation_count": len(mutations),
+        # 保留 mutation 字段兼容旧版单 Mutation Runner。
+        "mutation": mutations[0].model_dump(mode="json"),
+        "mutations": [mutation.model_dump(mode="json") for mutation in mutations],
     }
 
 
@@ -77,6 +124,7 @@ def build(
     output_root: Path,
     *,
     snapshot_roots: list[Path],
+    operation_id_aliases: dict[str, str] | None = None,
 ) -> int:
     samples, _ = load_samples(input_path, require_redacted=True)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -87,7 +135,10 @@ def build(
 
     operations: list[dict[str, Any]] = []
     for sample in samples:
-        available = _snapshot_case_ids(snapshot_roots, sample.operation_id)
+        available = _snapshot_case_ids(
+            snapshot_roots,
+            operation_id_candidates(sample.operation_id, operation_id_aliases),
+        )
         if not available:
             operations.append(
                 {
@@ -116,7 +167,7 @@ def build(
             {
                 "operation_id": sample.operation_id,
                 "status": "prepared",
-                "mutation_count": 1,
+                "mutation_count": plan["mutation_count"],
                 "plan": str(plan_path),
                 "base": str(base_path),
             }
@@ -141,8 +192,18 @@ def main() -> int:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--snapshot-root", type=Path, action="append", required=True)
+    parser.add_argument("--operation-aliases", type=Path)
     args = parser.parse_args()
-    return build(args.input, args.output_root, snapshot_roots=args.snapshot_root)
+    aliases = {}
+    if args.operation_aliases:
+        payload = yaml.safe_load(args.operation_aliases.read_text(encoding="utf-8")) or {}
+        aliases = payload.get("operation_id_aliases", payload) if isinstance(payload, dict) else {}
+    return build(
+        args.input,
+        args.output_root,
+        snapshot_roots=args.snapshot_root,
+        operation_id_aliases={str(key): str(value) for key, value in aliases.items()},
+    )
 
 
 if __name__ == "__main__":
