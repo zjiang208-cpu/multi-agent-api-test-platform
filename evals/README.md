@@ -59,8 +59,15 @@ Recovery 计划会对同一目标 Case 独立注入多种可解释缺陷：delet
     operation_id_aliases:
       observed-operation-id: canonical-operation-id
 
-三轮结果可用下面的入口汇总：
+多轮结果可用下面的入口汇总；正式实验可传入五轮或更多轮报告：
 
-    python -m evals.recovery_experiment --report evals/reports/recovery-run-1.json --report evals/reports/recovery-run-2.json --report evals/reports/recovery-run-3.json --threshold 0.90 --output evals/reports/recovery-experiment-summary.json
+    python -m evals.recovery_experiment `
+      --report <run-1/recovery-evaluation.json> `
+      --report <run-2/recovery-evaluation.json> `
+      --report <run-3/recovery-evaluation.json> `
+      --report <run-4/recovery-evaluation.json> `
+      --report <run-5/recovery-evaluation.json> `
+      --threshold 0.90 `
+      --output <recovery-experiment-summary.json>
 
-汇总中的 coverage_recovery_rate 对应单轮报告的 recovery_rate，按 Ground Truth Test Point 做 micro 统计；同时保留 defect_recovery_rate，用于检查缺失参数、断言或鉴权头是否真的恢复，而不是只看测试点数量回来。all_runs_meet_threshold 表示每一轮都达到 90%，mean_meets_threshold 只表示三轮均值达到 90%，两者含义不同。
+汇总中的 coverage_recovery_rate 对应单轮报告的 recovery_rate，按 Ground Truth Test Point 做 micro 统计；同时保留 defect_recovery_rate，用于检查缺失参数、断言或鉴权头是否真的恢复，而不是只看测试点数量回来。all_runs_meet_threshold 表示每一轮都达到 90%，mean_meets_threshold 只表示多轮均值达到 90%，两者含义不同。

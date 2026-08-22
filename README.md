@@ -204,8 +204,9 @@ npm run build
 
 - NLU：Test Point Recall、Precision 和 Hallucination Rate；
 - Designer：Test Point Coverage、Assertion Coverage、Executable Case Rate 和 Duplicate Rate；
-- Reviewer：通过删除用例、删除断言、重复用例和 Expected 篡改等 Mutation 计算 Gap Recall/Precision；
+- Reviewer：通过删除用例、删除断言、重复用例和 Expected 篡改等 Mutation 计算 Gap Recall/Precision；进一步通过缺陷注入评估缺陷识别、补例恢复和结构化修复能力；
 - Telemetry：聚合首轮成功、Repair/Retry、阶段耗时和 Token 使用；
+- Recovery：基于清洁对照组（clean control）和多类 Mutation，评估缺陷检测率、测试点覆盖恢复率、结构化缺陷恢复率及多轮实验稳定性；
 - Ablation：对比 Designer、Reviewer、Supplement 和 Local Rules 变体。
 
 评测只对人工确认的 Ground Truth 计算质量指标，不使用 Reviewer 自评或 LLM-as-a-Judge 作为第一版核心指标。未完成标注时，报告保持 `pending_annotation`，不会编造分数；人工确认的模型漏测通过 `reviewed_missing_assertion_ids` 显式登记，仍按未匹配断言计入覆盖率分母。
